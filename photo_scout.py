@@ -204,11 +204,8 @@ def load_photos(
             )
         sys.exit(3)
 
-    # Sort newest-first so --limit selects the most recent photos
+    # Sort newest-first so --limit picks the most recent unanalysed photos
     available.sort(key=lambda p: p.date.timestamp() if p.date else 0, reverse=True)
-
-    if limit:
-        available = available[:limit]
 
     return available, skipped_cloud
 
@@ -587,7 +584,11 @@ def main() -> None:
     photos_to_run = [p for p in photos if str(Path(p.path)) not in already_analysed]
 
     if prior_results and not args.force:
-        print(f"  Resuming: {len(prior_results)} already in report, {len(photos_to_run)} new.")
+        print(f"  Resuming: {len(prior_results)} already in report, {len(photos_to_run)} unanalysed.")
+
+    # Apply --limit to unanalysed photos so it always means "analyse N new photos"
+    if args.limit:
+        photos_to_run = photos_to_run[: args.limit]
 
     if not photos_to_run:
         print("Nothing new to analyse. Use --force to re-analyse everything.")
