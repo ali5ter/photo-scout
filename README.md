@@ -49,12 +49,23 @@ To use a different model at setup time:
 
 | Model | Size | Speed on M1 8 GB | Quality |
 |---|---|---|---|
-| `moondream` | 1.7 GB | Fast (~5–10 s/image) | Basic descriptions |
+| `moondream` | 1.7 GB | Fast (~5–10 s/image) | Pipeline testing only — too small for real analysis |
 | `llava-phi3` | 2.9 GB | Moderate (~15–30 s/image) | Good |
 | `llava:7b` | 4.1 GB | Slow (~30–60 s/image) | Best (recommended) |
 
 On an M1 8 GB machine `llava:7b` fits comfortably (unified memory). It is slow but accurate.
-Use `--model moondream` for a quick test run.
+
+> **moondream warning:** moondream is too small to follow structured prompts reliably. It tends
+> to echo the JSON template rather than analyse the image, producing identical scores and
+> placeholder keywords for every photo. Use it only to verify the pipeline runs end-to-end,
+> then switch to `llava:7b` for real analysis.
+
+To add or switch models, use `setup.sh` rather than `ollama pull` directly — it ensures the
+full environment is consistent:
+
+```bash
+./setup.sh llava:7b
+```
 
 ## Usage
 
