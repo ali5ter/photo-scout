@@ -25,14 +25,24 @@ Everything runs locally — no cloud services, no API costs, no data leaving the
 ## Installation
 
 ```bash
-# Clone the repository
-git clone https://github.com/ali5ter/photo-scout.git
+git clone --recurse-submodules https://github.com/ali5ter/photo-scout.git
 cd photo-scout
-
-# Create a virtual environment and install dependencies
-python3 -m venv .venv
+./setup.sh
 source .venv/bin/activate
-pip install -r requirements.txt
+```
+
+`setup.sh` is idempotent — safe to re-run at any time. It:
+
+1. Checks Ollama is installed and running
+2. Pulls the vision model if not already present
+3. Creates a Python virtual environment
+4. Installs pip dependencies
+
+To use a different model at setup time:
+
+```bash
+./setup.sh moondream    # faster, smaller
+./setup.sh llava-phi3   # good middle ground
 ```
 
 ## Model Choice
