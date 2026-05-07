@@ -15,12 +15,24 @@ Everything runs locally — no cloud services, no API costs, no data leaving the
 - Outputs a CSV (sortable in Numbers/Excel) or a Markdown report
 - Handles iCloud-only photos gracefully (skips with a count)
 
+## Platform Support
+
+| Platform | Ollama install method |
+|---|---|
+| macOS (Intel / Apple Silicon) | `brew install ollama` (via Homebrew) |
+| Ubuntu / Debian / Raspberry Pi | Official install script via `curl` |
+
+`setup.sh` handles installation automatically on both platforms.
+
+> **Raspberry Pi note:** Vision models are memory-intensive. On a Pi 4/5 with 4 GB RAM,
+> only `moondream` (~1.7 GB) is practical — `llava:7b` (4.1 GB) will OOM or run
+> impractically slowly. Even `moondream` will take several minutes per image on Pi hardware.
+
 ## Requirements
 
-- macOS with Photos.app
-- [Ollama](https://ollama.com) installed and running (`ollama serve`)
-- A vision-capable Ollama model (see [Model Choice](#model-choice) below)
+- macOS with Photos.app (the Photos library is only accessible on macOS)
 - Python 3.10+
+- Ollama — installed automatically by `setup.sh` if absent
 
 ## Installation
 
@@ -33,31 +45,29 @@ source .venv/bin/activate
 
 `setup.sh` is idempotent — safe to re-run at any time. It:
 
-1. Checks Ollama is installed and running
-2. Pulls the vision model if not already present
-3. Creates a Python virtual environment
-4. Installs pip dependencies
+1. Installs Ollama if not already present (platform-appropriate method)
+2. Starts the Ollama service if not running
+3. Pulls the vision model if not already downloaded
+4. Creates a Python virtual environment
+5. Installs pip dependencies
 
 To use a different model at setup time:
 
 ```bash
-./setup.sh moondream    # faster, smaller
+./setup.sh moondream    # faster, smaller — good for testing or Raspberry Pi
 ./setup.sh llava-phi3   # good middle ground
+./setup.sh llava:7b     # default, best quality (needs ~4 GB free RAM)
 ```
 
 ## Model Choice
 
-No vision models are bundled — pull one before running:
+No vision models are bundled — `setup.sh` pulls one automatically.
 
-| Model | Size | Speed on M1 8 GB | Quality |
-|---|---|---|---|
-| `moondream` | 1.7 GB | Fast (~5–10 s/image) | Basic descriptions |
-| `llava-phi3` | 2.9 GB | Moderate (~15–30 s/image) | Good |
-| `llava:7b` | 4.1 GB | Slow (~30–60 s/image) | Best (recommended) |
-
-```bash
-ollama pull llava:7b
-```
+| Model | Size | Speed on M1 8 GB | Quality | RPi suitable? |
+|---|---|---|---|---|
+| `moondream` | 1.7 GB | Fast (~5–10 s/image) | Basic descriptions | Yes (slow) |
+| `llava-phi3` | 2.9 GB | Moderate (~15–30 s/image) | Good | Borderline |
+| `llava:7b` | 4.1 GB | Slow (~30–60 s/image) | Best (recommended) | No |
 
 On an M1 8 GB machine `llava:7b` fits comfortably (unified memory). It is slow but accurate.
 Use `--model moondream` for a quick test run.
