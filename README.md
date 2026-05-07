@@ -82,7 +82,10 @@ python photo_scout.py --since 2024-01-01
 # Force re-analysis of everything (ignore existing report)
 python photo_scout.py --force
 
-# Output as CSV (for sorting in Numbers/Excel)
+# Also write a human-readable Markdown report alongside the JSON
+python photo_scout.py --markdown
+
+# Output as CSV instead (for sorting in Numbers/Excel)
 python photo_scout.py --format csv
 ```
 
@@ -93,7 +96,8 @@ Full option reference:
 --album NAME       Filter to photos in this album (exact title match)
 --model MODEL      Ollama model (default: llava:7b)
 --output FILE      Output file written to current directory (default: photo-scout-report.json)
---format FORMAT    json | csv | markdown (default: json)
+--format FORMAT    json | csv (default: json)
+--markdown         Also write a Markdown report alongside the primary output
 --limit N          Max photos to process (selects most recent N)
 --since YYYY-MM-DD Only photos taken on or after this date
 --force            Re-analyse all photos, ignoring any existing report

@@ -531,10 +531,15 @@ def main() -> None:
     )
     parser.add_argument(
         "--format",
-        choices=["json", "csv", "markdown"],
+        choices=["json", "csv"],
         default="json",
         dest="output_format",
-        help="Output format (default: json)",
+        help="Primary output format (default: json)",
+    )
+    parser.add_argument(
+        "--markdown",
+        action="store_true",
+        help="Also write a human-readable Markdown report alongside the primary output",
     )
     parser.add_argument(
         "--limit",
@@ -563,9 +568,8 @@ def main() -> None:
             sys.exit(1)
 
     output_path: Path = args.output
-    suffix_map = {"json": ".json", "markdown": ".md"}
-    expected_suffix = suffix_map.get(args.output_format)
-    if expected_suffix and output_path.suffix != expected_suffix:
+    expected_suffix = ".json" if args.output_format == "json" else ".csv"
+    if output_path.suffix != expected_suffix:
         output_path = output_path.with_suffix(expected_suffix)
 
     print(f"Checking Ollama (model: {args.model})...")
@@ -610,10 +614,12 @@ def main() -> None:
     print()
     if args.output_format == "json":
         write_json(analyses, output_path)
-    elif args.output_format == "csv":
-        write_csv(analyses, output_path)
     else:
-        write_markdown(analyses, output_path)
+        write_csv(analyses, output_path)
+
+    if args.markdown:
+        md_path = output_path.with_suffix(".md")
+        write_markdown(analyses, md_path)
 
     submit_count = sum(1 for a in analyses if a.recommendation == "submit")
     maybe_count = sum(1 for a in analyses if a.recommendation == "maybe")
@@ -624,7 +630,9 @@ def main() -> None:
     print(f"  Submit: {submit_count}  |  Maybe: {maybe_count}  |  Skip: {skip_count}")
     if error_count:
         print(f"  Errors: {error_count} (see report for details)")
-    print(f"\nReport: {output_path.resolve()}")
+    print(f"\nReport:   {output_path.resolve()}")
+    if args.markdown:
+        print(f"Markdown: {output_path.with_suffix('.md').resolve()}")
 
 
 if __name__ == "__main__":
