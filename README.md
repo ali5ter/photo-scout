@@ -14,7 +14,7 @@ Everything runs locally — no cloud services, no API costs, no data leaving the
 - Filters by album, date range, or photo count
 - Scores each photo on technical quality and commercial appeal (1–5 each)
 - Recommends: **submit**, **maybe**, or **skip**
-- Outputs JSON (default), CSV, or Markdown
+- Outputs JSON (default) or CSV; optional Markdown summary via `--markdown`
 - Handles iCloud-only photos gracefully
 
 ## Requirements
@@ -47,13 +47,14 @@ To use a different model at setup time:
 
 ## Model Choice
 
-| Model | Size | Speed on M1 8 GB | Quality |
+| Model | Size | Speed (Apple Silicon, 8 GB) | Quality |
 |---|---|---|---|
 | `moondream` | 1.7 GB | Fast (~5–10 s/image) | Pipeline testing only — too small for real analysis |
 | `llava-phi3` | 2.9 GB | Moderate (~15–30 s/image) | Good |
 | `llava:7b` | 4.1 GB | Slow (~30–60 s/image) | Best (recommended) |
 
-On an M1 8 GB machine `llava:7b` fits comfortably (unified memory). It is slow but accurate.
+On Apple Silicon with 8 GB unified memory, `llava:7b` (4 GB quantized) fits comfortably alongside
+the OS. It is slow but produces genuinely useful analysis.
 
 > **moondream warning:** moondream is too small to follow structured prompts reliably. It tends
 > to echo the JSON template rather than analyse the image, producing identical scores and
@@ -180,7 +181,7 @@ After reviewing the report, use `embed-metadata.sh` to copy qualifying photos to
 
 Sites that pay per download (unlike Unsplash, which is free):
 
-- [Adobe Stock](https://stock.adobe.com/uk/contributor) — large audience, fair royalties
+- [Adobe Stock](https://stock.adobe.com/contributor) — large audience, fair royalties
 - [Shutterstock](https://submit.shutterstock.com) — high volume, lower per-download rate
 - [Alamy](https://www.alamy.com/contributor/) — accepts editorial/niche content, higher royalties
 - [Pond5](https://www.pond5.com) — strong for video, also accepts photos
