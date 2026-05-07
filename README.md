@@ -48,7 +48,7 @@ To use a different model at setup time:
 ## Model Choice
 
 | Model | Size | Speed (Apple Silicon, 8 GB) | Quality |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `moondream` | 1.7 GB | Fast (~5–10 s/image) | Pipeline testing only — too small for real analysis |
 | `llava-phi3` | 2.9 GB | Moderate (~15–30 s/image) | Good |
 | `llava:7b` | 4.1 GB | Slow (~30–60 s/image) | Best (recommended) |
@@ -111,7 +111,7 @@ Running from the project directory (`photo-scout/`) is recommended so the report
 the other scripts.
 
 | File | Created by | Description |
-|---|---|---|
+| --- | --- | --- |
 | `photo-scout-report.json` | `photo_scout.py` | Analysis results (gitignored) |
 | `ready-to-submit/` | `embed-metadata.sh` | Tagged copies of recommended photos (gitignored) |
 
@@ -120,7 +120,7 @@ the other scripts.
 Each photo receives two scores from the vision model, both on a 1–5 scale:
 
 | Score | technical_score | commercial_score |
-|---|---|---|
+| --- | --- | --- |
 | 1 | Very poor — blurry, severely over/under-exposed, heavy noise | No stock value — personal snapshots, identifiable faces without releases |
 | 2 | Poor | Low appeal |
 | 3 | Acceptable | Moderate appeal |
@@ -168,14 +168,43 @@ There is no way to trigger iCloud downloads programmatically from this script.
 
 ## Embedding metadata and preparing for upload
 
-After reviewing the report, use `embed-metadata.sh` to copy qualifying photos to
-`ready-to-submit/` with IPTC/XMP keywords and caption embedded:
+Once you have a report you're happy with, `embed-metadata.sh` reads it and:
+
+1. Filters photos by recommendation level (`submit`, `maybe`, or `all`)
+2. Copies each qualifying original from the Photos library to an output directory
+3. Uses `exiftool` to embed the model's keywords and caption into the copy as IPTC and XMP tags
+
+Originals in the Photos library are **never modified** — the script only works on copies.
 
 ```bash
 ./embed-metadata.sh                        # submit recommendations only (default)
 ./embed-metadata.sh --filter maybe         # submit + maybe
 ./embed-metadata.sh --report my-report.json --output ~/Desktop/stock-uploads
 ```
+
+Full option reference:
+
+```text
+--report FILE    Path to photo-scout JSON report (default: photo-scout-report.json)
+--output DIR     Output directory for tagged copies (default: ready-to-submit/)
+--filter LEVEL   submit | maybe | all (default: submit)
+--help           Show this help
+```
+
+Filter levels:
+
+| Filter | What's included |
+| --- | --- |
+| `submit` | Only photos the model recommends for submission |
+| `maybe` | Submit and maybe recommendations |
+| `all` | Every analysed photo, including skip |
+
+The tagged copies in `ready-to-submit/` (or your chosen output directory) are ready to upload
+directly to stock platforms. Each file has IPTC keywords, an IPTC caption, and XMP equivalents
+embedded — the standard metadata fields that Adobe Stock, Alamy, and Shutterstock read on import.
+
+Run `embed-metadata.sh` from the project directory so it can find the default report and write
+the output directory relative to your current location.
 
 ## Stock Photo Platforms
 
