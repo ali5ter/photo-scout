@@ -36,8 +36,8 @@ source "$(brew --prefix)/bin/pfb" || true
 # Defaults
 # ---------------------------------------------------------------------------
 
-REPORT="${SCRIPT_DIR}/photo-scout-report.json"
-OUTPUT_DIR="${SCRIPT_DIR}/ready-to-submit"
+REPORT="photo-scout-report.json"
+OUTPUT_DIR="ready-to-submit"
 FILTER="submit"
 
 # ---------------------------------------------------------------------------

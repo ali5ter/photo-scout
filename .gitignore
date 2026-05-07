@@ -8,9 +8,11 @@ venv/
 dist/
 build/
 
-# Generated reports
+# Generated reports and tagged output
+*-report.json
 *-report.csv
 *-report.md
+ready-to-submit/
 
 # AI context (managed separately in ali5ter/ai-context)
 CLAUDE.md
