@@ -46,7 +46,9 @@ import argparse
 import csv
 import json
 import re
+import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -278,6 +280,46 @@ def _extract_json(text: str) -> dict:
     return {}
 
 
+# Formats that Ollama vision models accept natively
+_OLLAMA_NATIVE_FORMATS = {".jpg", ".jpeg", ".png"}
+
+
+def _to_jpeg_if_needed(path: Path) -> tuple[Path, bool]:
+    """Convert an image to a temporary JPEG if Ollama cannot read its format.
+
+    Ollama vision models only handle JPEG and PNG. HEIC, HEIF, TIFF, RAW, and
+    other formats must be converted first. Uses macOS sips (built-in), so no
+    extra dependency is required.
+
+    Args:
+        path: Path to the source image.
+
+    Returns:
+        Tuple of (path_to_use, is_temporary). When is_temporary is True the
+        caller is responsible for deleting the file after use.
+
+    Raises:
+        RuntimeError: If sips conversion fails.
+    """
+    if path.suffix.lower() in _OLLAMA_NATIVE_FORMATS:
+        return path, False
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+    tmp.close()
+    tmp_path = Path(tmp.name)
+
+    result = subprocess.run(
+        ["sips", "-s", "format", "jpeg", str(path), "--out", str(tmp_path)],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        tmp_path.unlink(missing_ok=True)
+        raise RuntimeError(f"sips conversion failed: {result.stderr.strip()}")
+
+    return tmp_path, True
+
+
 def analyse_photo(photo: osxphotos.PhotoInfo, model: str) -> PhotoAnalysis:
     """Analyse a single photo using the Ollama vision model.
 
@@ -297,16 +339,21 @@ def analyse_photo(photo: osxphotos.PhotoInfo, model: str) -> PhotoAnalysis:
     )
 
     try:
-        response = ollama.chat(
-            model=model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": _ANALYSIS_PROMPT,
-                    "images": [str(path)],
-                }
-            ],
-        )
+        image_path, is_temp = _to_jpeg_if_needed(path)
+        try:
+            response = ollama.chat(
+                model=model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": _ANALYSIS_PROMPT,
+                        "images": [str(image_path)],
+                    }
+                ],
+            )
+        finally:
+            if is_temp:
+                image_path.unlink(missing_ok=True)
         parsed = _extract_json(response.message.content)
         if parsed:
             result.technical_score = max(1, min(5, int(parsed.get("technical_score", 0))))
