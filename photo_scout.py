@@ -274,6 +274,32 @@ def analyse_photo(photo: osxphotos.PhotoInfo, model: str) -> PhotoAnalysis:
     return result
 
 
+def write_json(analyses: list[PhotoAnalysis], output_path: Path) -> None:
+    """Write analysis results to a JSON file.
+
+    Args:
+        analyses: List of PhotoAnalysis results (caller should pre-sort).
+        output_path: Destination file path; will be created or overwritten.
+    """
+    data = [
+        {
+            "filename": a.filename,
+            "date_taken": a.date_taken,
+            "original_path": a.original_path,
+            "overall_score": a.overall_score,
+            "technical_score": a.technical_score,
+            "commercial_score": a.commercial_score,
+            "recommendation": a.recommendation,
+            "subject": a.subject,
+            "keywords": a.keywords,
+            "reason": a.reason,
+            "error": a.error,
+        }
+        for a in analyses
+    ]
+    output_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
 def write_csv(analyses: list[PhotoAnalysis], output_path: Path) -> None:
     """Write analysis results to a CSV file.
 
@@ -401,17 +427,17 @@ def main() -> None:
     )
     parser.add_argument(
         "--output",
-        default="photo-scout-report.csv",
+        default="photo-scout-report.json",
         metavar="FILE",
         type=Path,
-        help="Output file path (default: photo-scout-report.csv)",
+        help="Output file path (default: photo-scout-report.json)",
     )
     parser.add_argument(
         "--format",
-        choices=["csv", "markdown"],
-        default="csv",
+        choices=["json", "csv", "markdown"],
+        default="json",
         dest="output_format",
-        help="Output format (default: csv)",
+        help="Output format (default: json)",
     )
     parser.add_argument(
         "--limit",
@@ -435,8 +461,10 @@ def main() -> None:
             sys.exit(1)
 
     output_path: Path = args.output
-    if args.output_format == "markdown" and output_path.suffix not in (".md", ".markdown"):
-        output_path = output_path.with_suffix(".md")
+    suffix_map = {"json": ".json", "markdown": ".md"}
+    expected_suffix = suffix_map.get(args.output_format)
+    if expected_suffix and output_path.suffix != expected_suffix:
+        output_path = output_path.with_suffix(expected_suffix)
 
     print(f"Checking Ollama (model: {args.model})...")
     check_ollama(args.model)
@@ -463,7 +491,9 @@ def main() -> None:
     analyses.sort(key=_sort_key)
 
     print()
-    if args.output_format == "csv":
+    if args.output_format == "json":
+        write_json(analyses, output_path)
+    elif args.output_format == "csv":
         write_csv(analyses, output_path)
     else:
         write_markdown(analyses, output_path)

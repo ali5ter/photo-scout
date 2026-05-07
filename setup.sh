@@ -67,6 +67,18 @@ fi
 source "$(brew --prefix)/bin/pfb" || true
 
 # ---------------------------------------------------------------------------
+# jq and exiftool — used by embed-metadata.sh
+# ---------------------------------------------------------------------------
+
+for _tool in jq exiftool; do
+    if ! command -v "${_tool}" &>/dev/null; then
+        pfb info "Installing ${_tool} via Homebrew..."
+        brew install "${_tool}"
+    fi
+done
+pfb success "jq and exiftool are available"
+
+# ---------------------------------------------------------------------------
 # Ollama — install and start
 # ---------------------------------------------------------------------------
 
