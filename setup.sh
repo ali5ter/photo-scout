@@ -61,8 +61,10 @@ if ! command -v pfb &>/dev/null; then
     brew install ali5ter/tap/pfb
 fi
 
+# pfb ends with [[ BASH_SOURCE == $0 ]] which returns 1 when sourced (expected).
+# The || true prevents set -e from treating that as a failure.
 # shellcheck disable=SC1090
-source "$(brew --prefix)/bin/pfb"
+source "$(brew --prefix)/bin/pfb" || true
 
 # ---------------------------------------------------------------------------
 # Ollama — install and start
