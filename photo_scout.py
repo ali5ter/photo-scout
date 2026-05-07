@@ -599,7 +599,8 @@ def main() -> None:
         if result.error:
             print(f"  — ERROR: {result.error}")
         else:
-            print(f"  — {result.recommendation} (score {result.overall_score})")
+            pct = round(result.overall_score / 5 * 100)
+            print(f"  — {result.recommendation}  tech:{result.technical_score}  comm:{result.commercial_score}  {pct}%")
         new_analyses.append(result)
 
     prior_analyses = [_analysis_from_dict(v) for v in prior_results.values()]
