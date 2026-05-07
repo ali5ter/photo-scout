@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Generated reports
+*-report.csv
+*-report.md
+
+# AI context (managed separately in ali5ter/ai-context)
+CLAUDE.md
+
+# macOS
+.DS_Store
