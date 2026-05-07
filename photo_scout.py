@@ -197,10 +197,55 @@ def load_photos(
             )
         sys.exit(3)
 
+    # Sort newest-first so --limit selects the most recent photos
+    available.sort(key=lambda p: p.date.timestamp() if p.date else 0, reverse=True)
+
     if limit:
         available = available[:limit]
 
     return available, skipped_cloud
+
+
+def _load_prior_results(output_path: Path) -> dict[str, dict]:
+    """Load previously analysed results from an existing JSON report.
+
+    Args:
+        output_path: Path to an existing photo-scout JSON report.
+
+    Returns:
+        Dict mapping original_path to its result dict, or empty dict if the
+        file does not exist or cannot be parsed.
+    """
+    if not output_path.exists():
+        return {}
+    try:
+        data = json.loads(output_path.read_text(encoding="utf-8"))
+        return {item["original_path"]: item for item in data if isinstance(item, dict)}
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return {}
+
+
+def _analysis_from_dict(data: dict) -> PhotoAnalysis:
+    """Reconstruct a PhotoAnalysis from a JSON-decoded dict.
+
+    Args:
+        data: Dict as written by write_json.
+
+    Returns:
+        PhotoAnalysis with fields populated from the dict.
+    """
+    return PhotoAnalysis(
+        filename=data.get("filename", ""),
+        date_taken=data.get("date_taken", ""),
+        original_path=data.get("original_path", ""),
+        technical_score=int(data.get("technical_score", 0)),
+        commercial_score=int(data.get("commercial_score", 0)),
+        subject=data.get("subject", ""),
+        keywords=list(data.get("keywords", [])),
+        recommendation=data.get("recommendation", "skip"),
+        reason=data.get("reason", ""),
+        error=data.get("error", ""),
+    )
 
 
 def _extract_json(text: str) -> dict:
@@ -450,6 +495,11 @@ def main() -> None:
         metavar="YYYY-MM-DD",
         help="Only process photos taken on or after this date",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-analyse all photos, ignoring any existing report",
+    )
     args = parser.parse_args()
 
     since: datetime | None = None
@@ -475,19 +525,33 @@ def main() -> None:
     if skipped_cloud:
         print(f"  Note: {skipped_cloud} iCloud-only photo(s) skipped (not downloaded locally).")
 
-    print(f"Analysing {len(photos)} photo(s). This may take a while on low-RAM hardware.\n")
+    # Load prior results for incremental runs (skipped when --force is set)
+    prior_results = {} if args.force else _load_prior_results(output_path)
+    already_analysed = set(prior_results.keys())
+    photos_to_run = [p for p in photos if str(Path(p.path)) not in already_analysed]
 
-    analyses: list[PhotoAnalysis] = []
-    for i, photo in enumerate(photos, 1):
+    if prior_results and not args.force:
+        print(f"  Resuming: {len(prior_results)} already in report, {len(photos_to_run)} new.")
+
+    if not photos_to_run:
+        print("Nothing new to analyse. Use --force to re-analyse everything.")
+        sys.exit(0)
+
+    print(f"Analysing {len(photos_to_run)} photo(s). This may take a while on low-RAM hardware.\n")
+
+    new_analyses: list[PhotoAnalysis] = []
+    for i, photo in enumerate(photos_to_run, 1):
         name = Path(photo.path).name
-        print(f"  [{i:>{len(str(len(photos)))}}/{len(photos)}] {name}", end="", flush=True)
+        print(f"  [{i:>{len(str(len(photos_to_run)))}}/{len(photos_to_run)}] {name}", end="", flush=True)
         result = analyse_photo(photo, args.model)
         if result.error:
             print(f"  — ERROR: {result.error}")
         else:
             print(f"  — {result.recommendation} (score {result.overall_score})")
-        analyses.append(result)
+        new_analyses.append(result)
 
+    prior_analyses = [_analysis_from_dict(v) for v in prior_results.values()]
+    analyses = prior_analyses + new_analyses
     analyses.sort(key=_sort_key)
 
     print()
@@ -503,7 +567,7 @@ def main() -> None:
     error_count = sum(1 for a in analyses if a.error)
     skip_count = len(analyses) - submit_count - maybe_count
 
-    print(f"Done. {len(analyses)} photo(s) analysed.")
+    print(f"Done. {len(new_analyses)} new photo(s) analysed ({len(analyses)} total in report).")
     print(f"  Submit: {submit_count}  |  Maybe: {maybe_count}  |  Skip: {skip_count}")
     if error_count:
         print(f"  Errors: {error_count} (see report for details)")

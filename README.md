@@ -9,11 +9,13 @@ Everything runs locally — no cloud services, no API costs, no data leaving the
 ## Features
 
 - Reads directly from the macOS Photos library (no export step needed)
+- Analyses most recent photos first
+- Skips already-analysed photos on subsequent runs (incremental)
 - Filters by album, date range, or photo count
 - Scores each photo on technical quality and commercial appeal (1–5 each)
 - Recommends: **submit**, **maybe**, or **skip**
-- Outputs a CSV (sortable in Numbers/Excel) or a Markdown report
-- Handles iCloud-only photos gracefully (skips with a count)
+- Outputs JSON (default), CSV, or Markdown
+- Handles iCloud-only photos gracefully
 
 ## Requirements
 
@@ -31,13 +33,9 @@ cd photo-scout
 source .venv/bin/activate
 ```
 
-`setup.sh` is idempotent — safe to re-run at any time. It:
-
-1. Installs [pfb](https://github.com/ali5ter/pfb) via Homebrew if absent
-2. Installs Ollama via Homebrew if absent
-3. Starts the Ollama service if not running
-4. Pulls the vision model if not already downloaded
-5. Creates a Python virtual environment and installs pip dependencies
+`setup.sh` is idempotent — safe to re-run at any time. It installs via Homebrew:
+[pfb](https://github.com/ali5ter/pfb), Ollama, jq, and exiftool; starts the Ollama
+service; pulls the vision model; and sets up the Python virtual environment.
 
 To use a different model at setup time:
 
@@ -48,8 +46,6 @@ To use a different model at setup time:
 ```
 
 ## Model Choice
-
-No vision models are bundled — `setup.sh` pulls one automatically.
 
 | Model | Size | Speed on M1 8 GB | Quality |
 |---|---|---|---|
@@ -63,20 +59,20 @@ Use `--model moondream` for a quick test run.
 ## Usage
 
 ```bash
-# Analyse the default Photos library (all photos with local originals)
-python photo_scout.py
+# Analyse the 20 most recent locally-available photos
+python photo_scout.py --model moondream --limit 20
 
 # Filter to a specific album
 python photo_scout.py --album Landscapes
 
-# Only photos taken since a date, output as Markdown
-python photo_scout.py --since 2024-01-01 --format markdown
+# Only photos taken since a date
+python photo_scout.py --since 2024-01-01
 
-# Quick test: process 20 photos with a faster model
-python photo_scout.py --model moondream --limit 20
+# Force re-analysis of everything (ignore existing report)
+python photo_scout.py --force
 
-# Use a non-default library path
-python photo_scout.py --library "/Volumes/External/My Library.photoslibrary"
+# Output as CSV (for sorting in Numbers/Excel)
+python photo_scout.py --format csv
 ```
 
 Full option reference:
@@ -85,41 +81,85 @@ Full option reference:
 --library PATH     Path to Photos library (default: system default)
 --album NAME       Filter to photos in this album (exact title match)
 --model MODEL      Ollama model (default: llava:7b)
---output FILE      Output file (default: photo-scout-report.csv)
---format FORMAT    csv or markdown (default: csv)
---limit N          Max photos to process
+--output FILE      Output file written to current directory (default: photo-scout-report.json)
+--format FORMAT    json | csv | markdown (default: json)
+--limit N          Max photos to process (selects most recent N)
 --since YYYY-MM-DD Only photos taken on or after this date
+--force            Re-analyse all photos, ignoring any existing report
 ```
 
-## Output
+## Output files
 
-### CSV
+All output is written to the **current working directory** — wherever you run the script from.
+Running from the project directory (`photo-scout/`) is recommended so the report is alongside
+the other scripts.
 
-The default CSV output has one row per photo, sorted by overall score descending:
+| File | Created by | Description |
+|---|---|---|
+| `photo-scout-report.json` | `photo_scout.py` | Analysis results (gitignored) |
+| `ready-to-submit/` | `embed-metadata.sh` | Tagged copies of recommended photos (gitignored) |
 
-| Column | Description |
-|---|---|
-| `overall_score` | Mean of technical and commercial scores (1.0–5.0) |
-| `recommendation` | `submit`, `maybe`, or `skip` |
-| `technical_score` | Sharpness, exposure, composition (1–5) |
-| `commercial_score` | Stock appeal — concept, lifestyle, nature (1–5) |
-| `subject` | Brief description of the main subject |
-| `keywords` | Semicolon-separated suggested tags |
-| `reason` | One-sentence justification |
-| `filename` | Original filename |
-| `date_taken` | Date photo was taken |
-| `original_path` | Full path to the original file |
+## Understanding the scores
 
-### Markdown
+Each photo receives two scores from the vision model, both on a 1–5 scale:
 
-Use `--format markdown` for a human-readable report grouped into **Submit**, **Maybe**, and
-**Skip** sections.
+| Score | technical_score | commercial_score |
+|---|---|---|
+| 1 | Very poor — blurry, severely over/under-exposed, heavy noise | No stock value — personal snapshots, identifiable faces without releases |
+| 2 | Poor | Low appeal |
+| 3 | Acceptable | Moderate appeal |
+| 4 | Good | Good commercial potential |
+| 5 | Excellent — sharp, well-exposed, strong composition | High value — concepts, lifestyle, nature, business, travel |
+
+`overall_score` is the mean of the two (1.0–5.0).
+
+`recommendation` is the model's holistic judgement:
+
+- **submit** — strong candidate, worth uploading
+- **maybe** — mixed signals, review manually before deciding
+- **skip** — not suitable for stock
+
+The scores inform the recommendation but don't mechanically determine it — a technically
+excellent photo of something with no commercial market will still be `skip`.
+
+## Incremental runs
+
+The report file accumulates results across runs. On each run, photos already present in the
+report are skipped automatically. This means you can run in batches:
+
+```bash
+# First pass — 50 most recent photos
+python photo_scout.py --limit 50
+
+# Next pass — picks up the next 50 not yet in the report
+python photo_scout.py --limit 50
+
+# Re-analyse everything from scratch
+python photo_scout.py --force
+```
 
 ## iCloud Photos
 
-Photos stored exclusively in iCloud (not downloaded to the local library) are skipped
-automatically. To include them, open Photos.app, select the photos, and choose
-**Image > Download Originals**.
+Photos stored only in iCloud (offloaded to save local disk space) are skipped automatically,
+and the count is reported. To include them:
+
+- **Download everything:** in Photos.app go to **Settings → iCloud** and select
+  **Download Originals to this Mac** (requires sufficient disk space)
+- **Download selectively:** select photos or an album in Photos.app, right-click, and choose
+  **Download \[N\] Originals**
+
+There is no way to trigger iCloud downloads programmatically from this script.
+
+## Embedding metadata and preparing for upload
+
+After reviewing the report, use `embed-metadata.sh` to copy qualifying photos to
+`ready-to-submit/` with IPTC/XMP keywords and caption embedded:
+
+```bash
+./embed-metadata.sh                        # submit recommendations only (default)
+./embed-metadata.sh --filter maybe         # submit + maybe
+./embed-metadata.sh --report my-report.json --output ~/Desktop/stock-uploads
+```
 
 ## Stock Photo Platforms
 
