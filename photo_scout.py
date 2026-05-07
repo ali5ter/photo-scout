@@ -55,22 +55,27 @@ import ollama
 import osxphotos
 
 _ANALYSIS_PROMPT = (
-    "Analyse this photograph for stock photo submission suitability. "
-    "Respond with ONLY a valid JSON object using exactly this structure, no other text:\n"
+    "You are a stock photo editor. Analyse this photograph and respond with ONLY a JSON object, "
+    "no other text before or after it.\n\n"
+    "JSON structure:\n"
     "{\n"
     '  "technical_score": <integer 1-5>,\n'
     '  "commercial_score": <integer 1-5>,\n'
-    '  "subject": "<5-10 word description of the main subject>",\n'
-    '  "keywords": ["tag1", "tag2", "tag3", "tag4", "tag5"],\n'
-    '  "recommendation": "<submit|maybe|skip>",\n'
-    '  "reason": "<one sentence explaining the recommendation>"\n'
+    '  "subject": <string: 5-10 words describing what is in the photo>,\n'
+    '  "keywords": <array of 5-10 single-word or short descriptive tags>,\n'
+    '  "recommendation": <one of the strings: submit, maybe, skip>,\n'
+    '  "reason": <string: one sentence justifying the recommendation>\n'
     "}\n\n"
-    "Scoring:\n"
-    "  technical_score: 1=very poor (blurry/dark/noisy/crooked), "
-    "3=acceptable, 5=excellent (sharp/well-exposed/strong composition).\n"
-    "  commercial_score: 1=no stock value (snapshots/personal), "
-    "3=moderate appeal, 5=high value (concepts/lifestyle/nature/business/travel).\n"
-    "  recommendation: submit=strong candidate, maybe=borderline, skip=not suitable."
+    "Scoring guide:\n"
+    "  technical_score 1 = very poor (blurry, badly exposed, heavy noise)\n"
+    "  technical_score 3 = acceptable sharpness and exposure\n"
+    "  technical_score 5 = excellent (sharp, well-exposed, strong composition)\n"
+    "  commercial_score 1 = no stock value (personal snapshots, identifiable people)\n"
+    "  commercial_score 3 = moderate appeal\n"
+    "  commercial_score 5 = high value (concepts, lifestyle, nature, business, travel)\n"
+    "  submit = strong candidate for stock submission\n"
+    "  maybe  = borderline, review manually\n"
+    "  skip   = not suitable for stock"
 )
 
 
