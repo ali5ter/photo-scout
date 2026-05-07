@@ -184,7 +184,7 @@ def load_photos(
         since_date = since.date()
         photos = [p for p in photos if p.date and p.date.date() >= since_date]
 
-    available = [p for p in photos if p.original_path and Path(p.original_path).exists()]
+    available = [p for p in photos if p.path and Path(p.path).exists()]
     skipped_cloud = len(photos) - len(available)
 
     if not available:
@@ -239,7 +239,7 @@ def analyse_photo(photo: osxphotos.PhotoInfo, model: str) -> PhotoAnalysis:
         Populated PhotoAnalysis dataclass. On failure the error field is set
         and scores default to 0.
     """
-    path = Path(photo.original_path)
+    path = Path(photo.path)
     result = PhotoAnalysis(
         filename=path.name,
         date_taken=photo.date.strftime("%Y-%m-%d") if photo.date else "",
@@ -479,7 +479,7 @@ def main() -> None:
 
     analyses: list[PhotoAnalysis] = []
     for i, photo in enumerate(photos, 1):
-        name = Path(photo.original_path).name
+        name = Path(photo.path).name
         print(f"  [{i:>{len(str(len(photos)))}}/{len(photos)}] {name}", end="", flush=True)
         result = analyse_photo(photo, args.model)
         if result.error:
