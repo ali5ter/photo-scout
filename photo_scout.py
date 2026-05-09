@@ -57,8 +57,10 @@ import ollama
 import osxphotos
 
 _ANALYSIS_PROMPT = (
-    "You are a stock photo editor. Analyse this photograph and respond with ONLY a JSON object, "
-    "no other text before or after it.\n\n"
+    "You are a senior stock photo editor at a premium agency. Most photos you review "
+    "are rejected — only genuinely strong images make it through. Apply the same strict "
+    "standards that Shutterstock and Adobe Stock reviewers use. Be critical.\n\n"
+    "Analyse this photograph and respond with ONLY a JSON object, no other text.\n\n"
     "JSON structure:\n"
     "{\n"
     '  "technical_score": <integer 1-5>,\n'
@@ -68,16 +70,25 @@ _ANALYSIS_PROMPT = (
     '  "recommendation": <one of the strings: submit, maybe, skip>,\n'
     '  "reason": <string: one sentence justifying the recommendation>\n'
     "}\n\n"
-    "Scoring guide:\n"
-    "  technical_score 1 = very poor (blurry, badly exposed, heavy noise)\n"
-    "  technical_score 3 = acceptable sharpness and exposure\n"
-    "  technical_score 5 = excellent (sharp, well-exposed, strong composition)\n"
-    "  commercial_score 1 = no stock value (personal snapshots, identifiable people)\n"
-    "  commercial_score 3 = moderate appeal\n"
-    "  commercial_score 5 = high value (concepts, lifestyle, nature, business, travel)\n"
-    "  submit = strong candidate for stock submission\n"
-    "  maybe  = borderline, review manually\n"
-    "  skip   = not suitable for stock"
+    "Technical score — sharpness, exposure, noise, composition:\n"
+    "  5 = Tack sharp, perfect exposure, no visible noise, professional composition\n"
+    "  4 = Sharp and clean — meets stock site technical bar\n"
+    "  3 = Acceptable but soft, slightly off-exposure, or minor noise — borderline\n"
+    "  2 = Noticeably soft, poorly exposed, or distracting noise\n"
+    "  1 = Blurry, badly exposed, or unusable\n\n"
+    "Commercial score — market demand, concept clarity, licensing:\n"
+    "  5 = Strong, clearly sellable concept (business, lifestyle, nature, travel, technology)\n"
+    "  4 = Solid commercial appeal with an identifiable buyer market\n"
+    "  3 = Niche or generic — limited buyers\n"
+    "  2 = Personal, documentary, or tourist snapshot — unlikely to sell\n"
+    "  1 = Identifiable people without releases, copyrighted elements, or zero commercial use\n\n"
+    "Recommendation — apply these rules exactly:\n"
+    "  submit = ONLY when technical_score >= 4 AND commercial_score >= 4\n"
+    "  maybe  = technical_score >= 3 AND commercial_score >= 3, but not both >= 4\n"
+    "  skip   = everything else\n\n"
+    "Automatically skip: soft focus, blown highlights, heavy shadows, crooked horizons, "
+    "cluttered or distracting backgrounds, obvious lens distortion, heavy noise, "
+    "tourist snapshots with no concept, or photos that look like personal records."
 )
 
 
@@ -368,6 +379,16 @@ def analyse_photo(photo: osxphotos.PhotoInfo, model: str) -> PhotoAnalysis:
             rec = str(parsed.get("recommendation", "skip")).lower()
             result.recommendation = rec if rec in ("submit", "maybe", "skip") else "skip"
             result.reason = str(parsed.get("reason", ""))
+            # Enforce minimum score thresholds regardless of model recommendation.
+            # Models sometimes assign 'submit' despite low scores; these floors prevent that.
+            if result.recommendation == "submit" and (
+                result.technical_score < 4 or result.commercial_score < 4
+            ):
+                result.recommendation = "maybe"
+            elif result.recommendation == "maybe" and (
+                result.technical_score < 3 or result.commercial_score < 3
+            ):
+                result.recommendation = "skip"
         else:
             result.error = "Could not parse model response as JSON"
     except Exception as exc:

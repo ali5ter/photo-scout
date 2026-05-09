@@ -124,22 +124,23 @@ Each photo receives two scores from the vision model, both on a 1–5 scale:
 
 | Score | technical_score | commercial_score |
 | --- | --- | --- |
-| 1 | Very poor — blurry, severely over/under-exposed, heavy noise | No stock value — personal snapshots, identifiable faces without releases |
-| 2 | Poor | Low appeal |
-| 3 | Acceptable | Moderate appeal |
-| 4 | Good | Good commercial potential |
-| 5 | Excellent — sharp, well-exposed, strong composition | High value — concepts, lifestyle, nature, business, travel |
+| 1 | Blurry, badly exposed, or unusable | Identifiable people without releases, copyrighted elements, or no commercial use |
+| 2 | Noticeably soft, poorly exposed, or distracting noise | Personal snapshot, documentary, or tourist shot unlikely to sell |
+| 3 | Acceptable but soft, slightly off-exposure, or minor noise — borderline | Niche or generic subject with limited buyers |
+| 4 | Sharp and clean — meets stock site technical bar | Solid commercial appeal with an identifiable buyer market |
+| 5 | Tack sharp, perfect exposure, no visible noise, professional composition | Strong sellable concept — business, lifestyle, nature, travel, technology |
 
 `overall_score` is the mean of the two (1.0–5.0).
 
-`recommendation` is the model's holistic judgement:
+`recommendation` is determined by strict score thresholds:
 
-- **submit** — strong candidate, worth uploading
-- **maybe** — mixed signals, review manually before deciding
-- **skip** — not suitable for stock
+- **submit** — both `technical_score` and `commercial_score` are 4 or above
+- **maybe** — both scores are 3 or above, but not both 4+; review manually before deciding
+- **skip** — either score is below 3, or the photo fails stock site standards
 
-The scores inform the recommendation but don't mechanically determine it — a technically
-excellent photo of something with no commercial market will still be `skip`.
+The model is prompted to apply the same rejection standards used by Shutterstock and Adobe Stock
+reviewers. The thresholds are also enforced in code, so a `submit` can never appear with scores
+below 4/4 regardless of what the model says.
 
 ## Incremental runs
 
