@@ -88,6 +88,7 @@ class PhotoAnalysis:
     Attributes:
         filename: Internal UUID-based filename used by Photos.app.
         original_filename: Camera-assigned filename at import (e.g. IMG_1234.HEIC).
+        uuid: Photos.app UUID (used for album operations via osascript).
         date_taken: ISO format date string (YYYY-MM-DD).
         original_path: Absolute path to the original file.
         technical_score: Quality rating 1-5 (sharpness, exposure, composition).
@@ -101,6 +102,7 @@ class PhotoAnalysis:
 
     filename: str
     original_filename: str
+    uuid: str
     date_taken: str
     original_path: str
     technical_score: int = 0
@@ -243,6 +245,7 @@ def _analysis_from_dict(data: dict) -> PhotoAnalysis:
     return PhotoAnalysis(
         filename=data.get("filename", ""),
         original_filename=data.get("original_filename", data.get("filename", "")),
+        uuid=data.get("uuid", Path(data.get("filename", "")).stem),
         date_taken=data.get("date_taken", ""),
         original_path=data.get("original_path", ""),
         technical_score=int(data.get("technical_score", 0)),
@@ -335,6 +338,7 @@ def analyse_photo(photo: osxphotos.PhotoInfo, model: str) -> PhotoAnalysis:
     result = PhotoAnalysis(
         filename=path.name,
         original_filename=photo.original_filename or path.name,
+        uuid=photo.uuid,
         date_taken=photo.date.strftime("%Y-%m-%d") if photo.date else "",
         original_path=str(path),
     )
@@ -383,6 +387,7 @@ def write_json(analyses: list[PhotoAnalysis], output_path: Path) -> None:
         {
             "filename": a.filename,
             "original_filename": a.original_filename,
+            "uuid": a.uuid,
             "date_taken": a.date_taken,
             "original_path": a.original_path,
             "overall_score": a.overall_score,

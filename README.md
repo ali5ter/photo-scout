@@ -114,6 +114,9 @@ the other scripts.
 | --- | --- | --- |
 | `photo-scout-report.json` | `photo_scout.py` | Analysis results (gitignored) |
 | `ready-to-submit/` | `embed-metadata.sh` | Tagged copies of recommended photos (gitignored) |
+| `ready-to-submit/submit/` | `embed-metadata.sh --organize` | Tagged submit photos in subfolder (gitignored) |
+| `ready-to-submit/maybe/` | `embed-metadata.sh --organize` | Tagged maybe photos in subfolder (gitignored) |
+| `ready-to-submit/skip/` | `embed-metadata.sh --organize` | Tagged skip photos in subfolder (gitignored) |
 
 ## Understanding the scores
 
@@ -166,6 +169,50 @@ and the count is reported. To include them:
 
 There is no way to trigger iCloud downloads programmatically from this script.
 
+## Identifying photos from the report
+
+Photos.app stores originals under internal UUID-based filenames (e.g.
+`4A2F3D8E-1234-5678-ABCD-9012EFAB.HEIC`) that are not searchable in Photos.app.
+The report includes two fields to help you map entries back to actual images:
+
+| Field | Example | How to use |
+| --- | --- | --- |
+| `original_filename` | `IMG_1234.HEIC` | Search by filename in Photos.app |
+| `uuid` | `4A2F3D8E-...` | Used by `create-albums.sh` for precise lookup |
+
+Two workflows let you browse photos visually alongside the report:
+
+### Option A — Organised folders (Finder)
+
+`embed-metadata.sh --organize` copies every analysed photo into
+`ready-to-submit/submit/`, `ready-to-submit/maybe/`, and `ready-to-submit/skip/`
+subfolders. Open the folder in Finder alongside your Markdown report to see
+photos and scores side by side.
+
+```bash
+./embed-metadata.sh --organize
+```
+
+### Option B — Photos.app albums
+
+`create-albums.sh` creates `photo-scout-submit`, `photo-scout-maybe`, and
+`photo-scout-skip` albums directly in Photos.app, populated with the analysed
+photos. Open Photos.app and browse each album visually.
+
+```bash
+./create-albums.sh
+```
+
+Photos.app must be open when the script runs. Existing album members are not
+duplicated on re-runs. Use `--prefix` to change the album name prefix if
+`photo-scout` conflicts with existing albums.
+
+```text
+--report FILE    Path to photo-scout JSON report (default: photo-scout-report.json)
+--prefix NAME    Album name prefix (default: photo-scout)
+--help           Show this help
+```
+
 ## Embedding metadata and preparing for upload
 
 Once you have a report you're happy with, `embed-metadata.sh` reads it and:
@@ -179,6 +226,7 @@ Originals in the Photos library are **never modified** — the script only works
 ```bash
 ./embed-metadata.sh                        # submit recommendations only (default)
 ./embed-metadata.sh --filter maybe         # submit + maybe
+./embed-metadata.sh --organize             # all photos in submit/ maybe/ skip/ subfolders
 ./embed-metadata.sh --report my-report.json --output ~/Desktop/stock-uploads
 ```
 
@@ -188,6 +236,7 @@ Full option reference:
 --report FILE    Path to photo-scout JSON report (default: photo-scout-report.json)
 --output DIR     Output directory for tagged copies (default: ready-to-submit/)
 --filter LEVEL   submit | maybe | all (default: submit)
+--organize       Create submit/ maybe/ skip/ subfolders (implies --filter all)
 --help           Show this help
 ```
 

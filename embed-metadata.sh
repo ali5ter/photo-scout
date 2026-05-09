@@ -39,6 +39,7 @@ source "$(brew --prefix)/bin/pfb" || true
 REPORT="photo-scout-report.json"
 OUTPUT_DIR="ready-to-submit"
 FILTER="submit"
+ORGANIZE=false
 
 # ---------------------------------------------------------------------------
 # Argument parsing
@@ -53,6 +54,7 @@ Options:
   --report FILE    Path to photo-scout JSON report (default: photo-scout-report.json)
   --output DIR     Output directory for tagged copies (default: ready-to-submit/)
   --filter LEVEL   Which photos to process: submit | maybe | all (default: submit)
+  --organize       Create submit/, maybe/, skip/ subfolders (implies --filter all)
   --help           Show this help
 
 Filter levels:
@@ -65,10 +67,11 @@ EOF
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --report) REPORT="$2"; shift 2 ;;
-        --output) OUTPUT_DIR="$2"; shift 2 ;;
-        --filter) FILTER="$2"; shift 2 ;;
-        --help)   _usage ;;
+        --report)   REPORT="$2"; shift 2 ;;
+        --output)   OUTPUT_DIR="$2"; shift 2 ;;
+        --filter)   FILTER="$2"; shift 2 ;;
+        --organize) ORGANIZE=true; shift ;;
+        --help)     _usage ;;
         *) pfb error "Unknown option: $1"; pfb info "Run ./embed-metadata.sh --help"; exit 1 ;;
     esac
 done
@@ -96,24 +99,32 @@ if ! jq empty "${REPORT}" 2>/dev/null; then
     exit 2
 fi
 
-case "${FILTER}" in
-    submit) JQ_FILTER='.[] | select(.recommendation == "submit")' ;;
-    maybe)  JQ_FILTER='.[] | select(.recommendation == "submit" or .recommendation == "maybe")' ;;
-    all)    JQ_FILTER='.[] | select(.error == "")' ;;
-    *)
-        pfb error "Invalid filter '${FILTER}'. Use: submit, maybe, or all."
-        exit 1
-        ;;
-esac
+if [[ "${ORGANIZE}" == "true" ]]; then
+    JQ_FILTER='.[] | select(.error == "")'
+else
+    case "${FILTER}" in
+        submit) JQ_FILTER='.[] | select(.recommendation == "submit")' ;;
+        maybe)  JQ_FILTER='.[] | select(.recommendation == "submit" or .recommendation == "maybe")' ;;
+        all)    JQ_FILTER='.[] | select(.error == "")' ;;
+        *)
+            pfb error "Invalid filter '${FILTER}'. Use: submit, maybe, or all."
+            exit 1
+            ;;
+    esac
+fi
 
 # ---------------------------------------------------------------------------
 # Process photos
 # ---------------------------------------------------------------------------
 
 pfb heading "Embedding metadata" "🏷"
-pfb subheading "Report:  ${REPORT}"
-pfb subheading "Output:  ${OUTPUT_DIR}"
-pfb subheading "Filter:  ${FILTER}"
+pfb subheading "Report:   ${REPORT}"
+pfb subheading "Output:   ${OUTPUT_DIR}"
+if [[ "${ORGANIZE}" == "true" ]]; then
+    pfb subheading "Organize: submit/ maybe/ skip/ subfolders"
+else
+    pfb subheading "Filter:   ${FILTER}"
+fi
 
 mkdir -p "${OUTPUT_DIR}"
 
@@ -133,6 +144,7 @@ while IFS= read -r photo_json; do
     original_path=$(jq -r '.original_path' <<< "${photo_json}")
     filename=$(jq -r '.filename' <<< "${photo_json}")
     subject=$(jq -r '.subject' <<< "${photo_json}")
+    recommendation=$(jq -r '.recommendation' <<< "${photo_json}")
 
     if [[ ! -f "${original_path}" ]]; then
         pfb warn "Original not found, skipping: ${filename}"
@@ -140,7 +152,12 @@ while IFS= read -r photo_json; do
         continue
     fi
 
-    output_file="${OUTPUT_DIR}/${filename}"
+    if [[ "${ORGANIZE}" == "true" ]]; then
+        mkdir -p "${OUTPUT_DIR}/${recommendation}"
+        output_file="${OUTPUT_DIR}/${recommendation}/${filename}"
+    else
+        output_file="${OUTPUT_DIR}/${filename}"
+    fi
     cp "${original_path}" "${output_file}"
 
     # Build exiftool keyword arguments from the JSON array
@@ -159,7 +176,11 @@ while IFS= read -r photo_json; do
         "${output_file}"
 
     ((count++)) || true
-    pfb subheading "[${count}/${total}] ${filename}"
+    if [[ "${ORGANIZE}" == "true" ]]; then
+        pfb subheading "[${count}/${total}] ${recommendation}/${filename}"
+    else
+        pfb subheading "[${count}/${total}] ${filename}"
+    fi
 
 done < <(jq -c "${JQ_FILTER}" "${REPORT}")
 
