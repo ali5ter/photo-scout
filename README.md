@@ -178,7 +178,7 @@ The report includes two fields to help you map entries back to actual images:
 | Field | Example | How to use |
 | --- | --- | --- |
 | `original_filename` | `IMG_1234.HEIC` | Search by filename in Photos.app |
-| `uuid` | `4A2F3D8E-...` | Used by `create-albums.sh` for precise lookup |
+| `uuid` | `4A2F3D8E-...` | Used by `tag-photos.sh` for precise Photos.app lookup |
 
 Two workflows let you browse photos visually alongside the report:
 
@@ -193,25 +193,35 @@ photos and scores side by side.
 ./embed-metadata.sh --organize
 ```
 
-### Option B — Photos.app albums
+### Option B — Photos.app keyword search
 
-`create-albums.sh` creates `photo-scout-submit`, `photo-scout-maybe`, and
-`photo-scout-skip` albums directly in Photos.app, populated with the analysed
-photos. Open Photos.app and browse each album visually.
+`tag-photos.sh` sets a Photos.app keyword on each photo matching its
+recommendation: `photo-scout-submit`, `photo-scout-maybe`, or `photo-scout-skip`.
+Once tagged, open Photos.app and search for a keyword to browse the photos
+visually — or create a persistent Smart Album.
 
 ```bash
-./create-albums.sh
+./tag-photos.sh
 ```
 
-Photos.app must be open when the script runs. Existing album members are not
-duplicated on re-runs. Use `--prefix` to change the album name prefix if
-`photo-scout` conflicts with existing albums.
+Photos.app must be open when the script runs. Existing user keywords on photos
+are preserved; re-running updates the keyword without duplicating it. Use
+`--clear` to remove all photo-scout keywords.
 
 ```text
 --report FILE    Path to photo-scout JSON report (default: photo-scout-report.json)
---prefix NAME    Album name prefix (default: photo-scout)
+--prefix NAME    Keyword prefix (default: photo-scout)
+--clear          Remove all photo-scout keywords without re-tagging
 --help           Show this help
 ```
+
+To browse after tagging:
+
+1. Open Photos.app and type `photo-scout-submit` in the search bar — all
+   submit candidates appear visually.
+2. For a permanent sidebar view: **File → New Smart Album**, set the filter to
+   **Keyword contains `photo-scout-submit`**, and save. Repeat for `maybe` and
+   `skip` if wanted.
 
 ## Embedding metadata and preparing for upload
 
