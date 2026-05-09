@@ -86,7 +86,8 @@ class PhotoAnalysis:
     """Analysis result for a single photo.
 
     Attributes:
-        filename: Base filename of the photo.
+        filename: Internal UUID-based filename used by Photos.app.
+        original_filename: Camera-assigned filename at import (e.g. IMG_1234.HEIC).
         date_taken: ISO format date string (YYYY-MM-DD).
         original_path: Absolute path to the original file.
         technical_score: Quality rating 1-5 (sharpness, exposure, composition).
@@ -99,6 +100,7 @@ class PhotoAnalysis:
     """
 
     filename: str
+    original_filename: str
     date_taken: str
     original_path: str
     technical_score: int = 0
@@ -240,6 +242,7 @@ def _analysis_from_dict(data: dict) -> PhotoAnalysis:
     """
     return PhotoAnalysis(
         filename=data.get("filename", ""),
+        original_filename=data.get("original_filename", data.get("filename", "")),
         date_taken=data.get("date_taken", ""),
         original_path=data.get("original_path", ""),
         technical_score=int(data.get("technical_score", 0)),
@@ -331,6 +334,7 @@ def analyse_photo(photo: osxphotos.PhotoInfo, model: str) -> PhotoAnalysis:
     path = Path(photo.path)
     result = PhotoAnalysis(
         filename=path.name,
+        original_filename=photo.original_filename or path.name,
         date_taken=photo.date.strftime("%Y-%m-%d") if photo.date else "",
         original_path=str(path),
     )
@@ -378,6 +382,7 @@ def write_json(analyses: list[PhotoAnalysis], output_path: Path) -> None:
     data = [
         {
             "filename": a.filename,
+            "original_filename": a.original_filename,
             "date_taken": a.date_taken,
             "original_path": a.original_path,
             "overall_score": a.overall_score,
@@ -409,6 +414,7 @@ def write_csv(analyses: list[PhotoAnalysis], output_path: Path) -> None:
         "subject",
         "keywords",
         "reason",
+        "original_filename",
         "filename",
         "date_taken",
         "original_path",
@@ -427,6 +433,7 @@ def write_csv(analyses: list[PhotoAnalysis], output_path: Path) -> None:
                     "subject": a.subject,
                     "keywords": "; ".join(a.keywords),
                     "reason": a.reason,
+                    "original_filename": a.original_filename,
                     "filename": a.filename,
                     "date_taken": a.date_taken,
                     "original_path": a.original_path,
@@ -468,7 +475,8 @@ def write_markdown(analyses: list[PhotoAnalysis], output_path: Path) -> None:
         ]
         for a in items:
             kw = ", ".join(a.keywords[:5])
-            lines.append(f"| {a.overall_score} | {a.filename} | {a.subject} | {kw} | {a.reason} |")
+            display_name = a.original_filename or a.filename
+            lines.append(f"| {a.overall_score} | {display_name} | {a.subject} | {kw} | {a.reason} |")
         lines.append("")
 
     if errors:
