@@ -57,39 +57,38 @@ import ollama
 import osxphotos
 
 _ANALYSIS_PROMPT = (
-    "You are a senior stock photo editor at a premium agency. Most photos you review "
-    "are rejected — only genuinely strong images make it through. Apply the same strict "
-    "standards that Shutterstock and Adobe Stock reviewers use. Be critical.\n\n"
+    "You are a senior stock photo editor at a premium agency. Technical quality "
+    "(sharpness, exposure, noise) is assessed separately by image analysis tools — "
+    "focus entirely on commercial appeal and content.\n\n"
     "Analyse this photograph and respond with ONLY a JSON object, no other text.\n\n"
     "JSON structure:\n"
     "{\n"
-    '  "technical_score": <integer 1-5>,\n'
     '  "commercial_score": <integer 1-5>,\n'
     '  "subject": <string: 5-10 words describing what is in the photo>,\n'
     '  "keywords": <array of 5-10 single-word or short descriptive tags>,\n'
     '  "recommendation": <one of the strings: submit, maybe, skip>,\n'
     '  "reason": <string: one sentence justifying the recommendation>\n'
     "}\n\n"
-    "Technical score — sharpness, exposure, noise, composition:\n"
-    "  5 = Tack sharp, perfect exposure, no visible noise, professional composition\n"
-    "  4 = Sharp and clean — meets stock site technical bar\n"
-    "  3 = Acceptable but soft, slightly off-exposure, or minor noise — borderline\n"
-    "  2 = Noticeably soft, poorly exposed, or distracting noise\n"
-    "  1 = Blurry, badly exposed, or unusable\n\n"
     "Commercial score — market demand, concept clarity, licensing:\n"
     "  5 = Strong, clearly sellable concept (business, lifestyle, nature, travel, technology)\n"
     "  4 = Solid commercial appeal with an identifiable buyer market\n"
     "  3 = Niche or generic — limited buyers\n"
     "  2 = Personal, documentary, or tourist snapshot — unlikely to sell\n"
     "  1 = Identifiable people without releases, copyrighted elements, or zero commercial use\n\n"
-    "Recommendation — apply these rules exactly:\n"
-    "  submit = ONLY when technical_score >= 4 AND commercial_score >= 4\n"
-    "  maybe  = technical_score >= 3 AND commercial_score >= 3, but not both >= 4\n"
-    "  skip   = everything else\n\n"
-    "Automatically skip: soft focus, blown highlights, heavy shadows, crooked horizons, "
-    "cluttered or distracting backgrounds, obvious lens distortion, heavy noise, "
-    "tourist snapshots with no concept, or photos that look like personal records."
+    "Recommendation — base on commercial_score only:\n"
+    "  submit = commercial_score >= 4\n"
+    "  maybe  = commercial_score >= 3\n"
+    "  skip   = commercial_score < 3, or identifiable people without releases, "
+    "copyrighted logos/brands, or clearly personal photos with no commercial application"
 )
+
+# Technical quality scoring calibration constants (tune if scores feel uniformly high or low).
+# Measured on a 1500px-wide grayscale image using PIL FIND_EDGES (Laplacian-like).
+# Sharpness uses the 90th-percentile edge value (not mean) to focus on strong edges
+# and reduce sensitivity to smooth areas (sky, skin) that drag the mean down.
+_SHARP_EDGE_LOW = 3.0    # p90 edge magnitude → sharpness 1 (blurry)
+_SHARP_EDGE_HIGH = 50.0  # p90 edge magnitude → sharpness 5 (very sharp)
+_NOISE_FLAT_HIGH = 6.0   # mean diff in flat regions → noise component 1 (very noisy)
 
 # CLIP stock-likeness scoring — must match _CLIP_MODEL / _CLIP_PRETRAINED in build_reference.py
 _CLIP_MODEL = "ViT-B-32"
@@ -313,6 +312,80 @@ def _extract_json(text: str) -> dict:
     return {}
 
 
+def _compute_technical_score(image_path: Path) -> int:
+    """Compute a technical quality score from deterministic image analysis.
+
+    Combines three independent signals, each mapped to a 1–5 component score:
+    - Sharpness: mean edge magnitude via PIL FIND_EDGES (Laplacian-like filter)
+    - Exposure: histogram clipping fraction, mean brightness, and dynamic range
+    - Noise: pixel-level variance in flat (low-edge) regions
+
+    Weights: sharpness 50 %, exposure 30 %, noise 20 %.
+    All metrics are computed at a standard 1500 px width so scores are
+    comparable across photos of different original resolutions.
+
+    Args:
+        image_path: Path to a JPEG or PNG image.
+
+    Returns:
+        Technical score 1–5, or 0 if analysis fails (caller falls back to model score).
+    """
+    try:
+        import math
+
+        import numpy as np
+        from PIL import Image, ImageFilter
+
+        img = Image.open(image_path).convert("RGB")
+        w, h = img.size
+        if w > 1500:
+            img = img.resize((1500, round(h * 1500 / w)), Image.LANCZOS)
+
+        gray = img.convert("L")
+        gray_arr = np.array(gray, dtype=float)
+
+        # Sharpness — 90th-percentile edge response (log scale to spread the 1–5 range).
+        # p90 focuses on the strongest edges in the frame rather than the mean, which is
+        # suppressed by large smooth areas (sky, skin, backgrounds).
+        edges_arr = np.array(gray.filter(ImageFilter.FIND_EDGES), dtype=float)
+        p90_edge = max(float(np.percentile(edges_arr, 90)), 0.5)
+        sharp = 1.0 + 4.0 * (
+            math.log(p90_edge / _SHARP_EDGE_LOW)
+            / math.log(_SHARP_EDGE_HIGH / _SHARP_EDGE_LOW)
+        )
+        sharp = max(1.0, min(5.0, sharp))
+
+        # Exposure — clipping, brightness, dynamic range
+        clipped_frac = float(np.mean((gray_arr < 8) | (gray_arr > 247)))
+        mean_brightness = float(gray_arr.mean())
+        std_brightness = float(gray_arr.std())
+
+        clipping_ok = max(0.0, 1.0 - clipped_frac * 8)         # 12.5 % clip → 0
+        brightness_ok = 1.0 - abs(mean_brightness - 128) / 128  # 1.0 at mid-grey
+        dynamic_ok = min(1.0, std_brightness / 55)              # saturates at std ≥ 55
+
+        exposure = 1.0 + 4.0 * (
+            clipping_ok * 0.4 + brightness_ok * 0.3 + dynamic_ok * 0.3
+        )
+        exposure = max(1.0, min(5.0, exposure))
+
+        # Noise — mean pixel variation in flat (low-edge) regions
+        blurred_arr = np.array(
+            gray.filter(ImageFilter.GaussianBlur(radius=1)), dtype=float
+        )
+        diff = np.abs(gray_arr - blurred_arr)
+        flat_mask = edges_arr < (edges_arr.mean() * 0.4)
+        noise_level = float(diff[flat_mask].mean()) if flat_mask.sum() > 200 else 0.0
+        noise = 1.0 + 4.0 * max(0.0, 1.0 - noise_level / _NOISE_FLAT_HIGH)
+        noise = max(1.0, min(5.0, noise))
+
+        combined = sharp * 0.5 + exposure * 0.3 + noise * 0.2
+        return max(1, min(5, round(combined)))
+
+    except Exception:
+        return 0
+
+
 def _load_clip_engine(reference_path: Path) -> tuple:
     """Load the CLIP model and reference embeddings for stock-likeness scoring.
 
@@ -472,7 +545,8 @@ def analyse_photo(
                     }
                 ],
             )
-            # Compute CLIP score while the (possibly converted) image file still exists
+            # Both metrics require the image file — compute before the finally cleanup
+            computed_tech = _compute_technical_score(image_path)
             if clip_engine is not None:
                 result.clip_score = _compute_clip_score(image_path, clip_engine)
         finally:
@@ -481,7 +555,8 @@ def analyse_photo(
 
         parsed = _extract_json(response.message.content)
         if parsed:
-            result.technical_score = max(1, min(5, int(parsed.get("technical_score", 0))))
+            # technical_score comes from image analysis, not the model
+            result.technical_score = computed_tech
             result.commercial_score = max(1, min(5, int(parsed.get("commercial_score", 0))))
             result.subject = str(parsed.get("subject", ""))
             result.keywords = [str(k) for k in parsed.get("keywords", [])]
@@ -736,9 +811,15 @@ def main() -> None:
     if output_path.suffix != expected_suffix:
         output_path = output_path.with_suffix(expected_suffix)
 
+    clip_reference = args.clip_reference
+    if clip_reference is None:
+        default_ref = Path("clip-reference-embeddings.npy")
+        if default_ref.exists():
+            clip_reference = default_ref
+
     clip_engine = None
-    if args.clip_reference:
-        clip_engine = _load_clip_engine(args.clip_reference)
+    if clip_reference:
+        clip_engine = _load_clip_engine(clip_reference)
 
     print(f"Checking Ollama (model: {args.model})...")
     check_ollama(args.model)

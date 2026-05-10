@@ -294,12 +294,6 @@ a CLIP embedding set from photos that are known to meet stock photo standards â€
 
 ### Step 1 â€” Build the reference set
 
-Install CLIP dependencies (one-time, ~2 GB download for PyTorch):
-
-```bash
-pip install open_clip_torch numpy Pillow requests
-```
-
 Download 200 featured photos from Wikimedia Commons and compute embeddings:
 
 ```bash
