@@ -91,6 +91,15 @@ _ANALYSIS_PROMPT = (
     "tourist snapshots with no concept, or photos that look like personal records."
 )
 
+# CLIP stock-likeness scoring — must match _CLIP_MODEL / _CLIP_PRETRAINED in build_reference.py
+_CLIP_MODEL = "ViT-B-32"
+_CLIP_PRETRAINED = "openai"
+# Cosine similarity thresholds calibrated for ViT-B-32/openai against Wikimedia featured photos.
+# mean-of-top-50 similarities typically fall in [0.65, 0.88] for natural images.
+_SIM_LOW = 0.65   # → clip_score 1
+_SIM_HIGH = 0.88  # → clip_score 5
+_TOP_K = 50       # number of top reference matches to average
+
 
 @dataclass
 class PhotoAnalysis:
@@ -122,14 +131,23 @@ class PhotoAnalysis:
     keywords: list[str] = field(default_factory=list)
     recommendation: str = "skip"
     reason: str = ""
+    clip_score: float = 0.0
     error: str = ""
 
     @property
     def overall_score(self) -> float:
-        """Mean of technical and commercial scores, or 0.0 if either is missing."""
-        if self.technical_score and self.commercial_score:
-            return round((self.technical_score + self.commercial_score) / 2, 1)
-        return 0.0
+        """Mean of technical score and the best available commercial signal.
+
+        Uses clip_score when present (CLIP-based stock similarity), otherwise
+        falls back to commercial_score (model judgment). Returns 0.0 if either
+        component is missing.
+        """
+        if not self.technical_score:
+            return 0.0
+        commercial = self.clip_score if self.clip_score > 0.0 else float(self.commercial_score)
+        if not commercial:
+            return 0.0
+        return round((self.technical_score + commercial) / 2, 1)
 
 
 def check_ollama(model: str) -> None:
@@ -265,6 +283,7 @@ def _analysis_from_dict(data: dict) -> PhotoAnalysis:
         keywords=list(data.get("keywords", [])),
         recommendation=data.get("recommendation", "skip"),
         reason=data.get("reason", ""),
+        clip_score=float(data.get("clip_score", 0.0)),
         error=data.get("error", ""),
     )
 
@@ -292,6 +311,85 @@ def _extract_json(text: str) -> dict:
             pass
 
     return {}
+
+
+def _load_clip_engine(reference_path: Path) -> tuple:
+    """Load the CLIP model and reference embeddings for stock-likeness scoring.
+
+    Args:
+        reference_path: Path to a .npy embeddings file produced by build_reference.py.
+
+    Returns:
+        Tuple of (model, preprocess, reference_embeddings_ndarray, device_string).
+
+    Raises:
+        SystemExit: Code 1 if CLIP dependencies are missing or the file cannot be loaded.
+    """
+    try:
+        import numpy as np
+        import open_clip
+        import torch
+    except ImportError as exc:
+        print(f"Error: CLIP dependencies not installed: {exc}", file=sys.stderr)
+        print("Fix: pip install open_clip_torch numpy Pillow", file=sys.stderr)
+        sys.exit(1)
+
+    if not reference_path.exists():
+        print(f"Error: CLIP reference file not found: {reference_path}", file=sys.stderr)
+        print("Fix: run python build_reference.py --download 200", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        ref_embs = np.load(str(reference_path))
+    except Exception as exc:
+        print(f"Error: cannot load CLIP reference embeddings: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    device = "mps" if torch.backends.mps.is_available() else "cpu"
+    print(f"Loading CLIP model ({_CLIP_MODEL})...")
+    model, _, preprocess = open_clip.create_model_and_transforms(
+        _CLIP_MODEL, pretrained=_CLIP_PRETRAINED
+    )
+    model = model.to(device)
+    model.eval()
+    print(f"  Reference set: {len(ref_embs)} embeddings from {reference_path}")
+    return model, preprocess, ref_embs, device
+
+
+def _compute_clip_score(image_path: Path, clip_engine: tuple) -> float:
+    """Score an image against the CLIP reference embedding set.
+
+    Computes the mean cosine similarity of the image embedding against the top-K
+    reference embeddings, then maps the result to a 1–5 scale.
+
+    Args:
+        image_path: Path to a JPEG or PNG image (HEIC already converted by caller).
+        clip_engine: Tuple from _load_clip_engine().
+
+    Returns:
+        Stock-likeness score 1.0–5.0, or 0.0 if embedding fails.
+    """
+    try:
+        import numpy as np
+        import torch
+        from PIL import Image as PILImage
+
+        model, preprocess, ref_embs, device = clip_engine
+        img = PILImage.open(image_path).convert("RGB")
+        tensor = preprocess(img).unsqueeze(0).to(device)
+        with torch.no_grad():
+            emb = model.encode_image(tensor)
+            emb = emb / emb.norm(dim=-1, keepdim=True)
+        emb_np = emb.cpu().float().numpy()  # shape [1, D]
+
+        sims = (ref_embs @ emb_np.T).flatten()  # cosine sim (both L2-normalised)
+        top_k = min(_TOP_K, len(sims))
+        mean_sim = float(np.sort(sims)[-top_k:].mean())
+
+        score = 1.0 + 4.0 * (mean_sim - _SIM_LOW) / (_SIM_HIGH - _SIM_LOW)
+        return round(max(1.0, min(5.0, score)), 1)
+    except Exception:
+        return 0.0
 
 
 # Formats that Ollama vision models accept natively
@@ -334,12 +432,19 @@ def _to_jpeg_if_needed(path: Path) -> tuple[Path, bool]:
     return tmp_path, True
 
 
-def analyse_photo(photo: osxphotos.PhotoInfo, model: str) -> PhotoAnalysis:
-    """Analyse a single photo using the Ollama vision model.
+def analyse_photo(
+    photo: osxphotos.PhotoInfo,
+    model: str,
+    clip_engine: tuple | None = None,
+) -> PhotoAnalysis:
+    """Analyse a single photo using the Ollama vision model and optional CLIP scoring.
 
     Args:
         photo: osxphotos PhotoInfo object representing the photo.
         model: Ollama model name to use for inference.
+        clip_engine: Optional tuple from _load_clip_engine(). When provided,
+            clip_score is computed and used instead of commercial_score for
+            recommendation thresholds and overall_score.
 
     Returns:
         Populated PhotoAnalysis dataclass. On failure the error field is set
@@ -367,9 +472,13 @@ def analyse_photo(photo: osxphotos.PhotoInfo, model: str) -> PhotoAnalysis:
                     }
                 ],
             )
+            # Compute CLIP score while the (possibly converted) image file still exists
+            if clip_engine is not None:
+                result.clip_score = _compute_clip_score(image_path, clip_engine)
         finally:
             if is_temp:
                 image_path.unlink(missing_ok=True)
+
         parsed = _extract_json(response.message.content)
         if parsed:
             result.technical_score = max(1, min(5, int(parsed.get("technical_score", 0))))
@@ -379,14 +488,22 @@ def analyse_photo(photo: osxphotos.PhotoInfo, model: str) -> PhotoAnalysis:
             rec = str(parsed.get("recommendation", "skip")).lower()
             result.recommendation = rec if rec in ("submit", "maybe", "skip") else "skip"
             result.reason = str(parsed.get("reason", ""))
+
+            # When CLIP is available, use clip_score as the commercial signal for thresholds.
+            # The model's commercial_score is still stored but CLIP is more reliable.
+            commercial = (
+                result.clip_score
+                if clip_engine is not None and result.clip_score > 0.0
+                else float(result.commercial_score)
+            )
             # Enforce minimum score thresholds regardless of model recommendation.
             # Models sometimes assign 'submit' despite low scores; these floors prevent that.
             if result.recommendation == "submit" and (
-                result.technical_score < 4 or result.commercial_score < 4
+                result.technical_score < 4 or commercial < 4
             ):
                 result.recommendation = "maybe"
             elif result.recommendation == "maybe" and (
-                result.technical_score < 3 or result.commercial_score < 3
+                result.technical_score < 3 or commercial < 3
             ):
                 result.recommendation = "skip"
         else:
@@ -414,6 +531,7 @@ def write_json(analyses: list[PhotoAnalysis], output_path: Path) -> None:
             "overall_score": a.overall_score,
             "technical_score": a.technical_score,
             "commercial_score": a.commercial_score,
+            "clip_score": a.clip_score,
             "recommendation": a.recommendation,
             "subject": a.subject,
             "keywords": a.keywords,
@@ -437,6 +555,7 @@ def write_csv(analyses: list[PhotoAnalysis], output_path: Path) -> None:
         "recommendation",
         "technical_score",
         "commercial_score",
+        "clip_score",
         "subject",
         "keywords",
         "reason",
@@ -456,6 +575,7 @@ def write_csv(analyses: list[PhotoAnalysis], output_path: Path) -> None:
                     "recommendation": a.recommendation,
                     "technical_score": a.technical_score,
                     "commercial_score": a.commercial_score,
+                    "clip_score": a.clip_score,
                     "subject": a.subject,
                     "keywords": "; ".join(a.keywords),
                     "reason": a.reason,
@@ -478,7 +598,9 @@ def write_markdown(analyses: list[PhotoAnalysis], output_path: Path) -> None:
     submit = [a for a in analyses if a.recommendation == "submit"]
     maybe = [a for a in analyses if a.recommendation == "maybe"]
     errors = [a for a in analyses if a.error]
+    clip_used = any(a.clip_score > 0.0 for a in analyses)
 
+    scoring_note = "CLIP stock-likeness scoring" if clip_used else "vision model scoring"
     lines: list[str] = [
         "# Photo Scout Report",
         "",
@@ -486,7 +608,8 @@ def write_markdown(analyses: list[PhotoAnalysis], output_path: Path) -> None:
         f"Analysed: {len(analyses)} | "
         f"Submit: {len(submit)} | "
         f"Maybe: {len(maybe)} | "
-        f"Skip: {len(analyses) - len(submit) - len(maybe)}",
+        f"Skip: {len(analyses) - len(submit) - len(maybe)} | "
+        f"Scoring: {scoring_note}",
         "",
     ]
 
@@ -588,6 +711,16 @@ def main() -> None:
         action="store_true",
         help="Re-analyse all photos, ignoring any existing report",
     )
+    parser.add_argument(
+        "--clip-reference",
+        metavar="FILE",
+        type=Path,
+        help=(
+            "Path to CLIP reference embeddings (.npy) from build_reference.py. "
+            "When provided, clip_score replaces the model's commercial_score for "
+            "recommendations, giving a data-driven stock-likeness signal."
+        ),
+    )
     args = parser.parse_args()
 
     since: datetime | None = None
@@ -602,6 +735,10 @@ def main() -> None:
     expected_suffix = ".json" if args.output_format == "json" else ".csv"
     if output_path.suffix != expected_suffix:
         output_path = output_path.with_suffix(expected_suffix)
+
+    clip_engine = None
+    if args.clip_reference:
+        clip_engine = _load_clip_engine(args.clip_reference)
 
     print(f"Checking Ollama (model: {args.model})...")
     check_ollama(args.model)
@@ -634,12 +771,16 @@ def main() -> None:
     for i, photo in enumerate(photos_to_run, 1):
         name = Path(photo.path).name
         print(f"  [{i:>{len(str(len(photos_to_run)))}}/{len(photos_to_run)}] {name}", end="", flush=True)
-        result = analyse_photo(photo, args.model)
+        result = analyse_photo(photo, args.model, clip_engine)
         if result.error:
             print(f"  — ERROR: {result.error}")
         else:
             pct = round(result.overall_score / 5 * 100)
-            print(f"  — {result.recommendation}  tech:{result.technical_score}  comm:{result.commercial_score}  {pct}%")
+            clip_info = f"  clip:{result.clip_score}" if result.clip_score > 0.0 else ""
+            print(
+                f"  — {result.recommendation}  tech:{result.technical_score}"
+                f"  comm:{result.commercial_score}{clip_info}  {pct}%"
+            )
         new_analyses.append(result)
 
     prior_analyses = [_analysis_from_dict(v) for v in prior_results.values()]

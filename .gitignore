@@ -14,6 +14,11 @@ build/
 *-report.md
 ready-to-submit/
 
+# CLIP reference set (generated — regenerate with build_reference.py)
+clip-reference/
+clip-reference-embeddings.npy
+clip-reference-embeddings.json
+
 # AI context (managed separately in ali5ter/ai-context)
 CLAUDE.md
 

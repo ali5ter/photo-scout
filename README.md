@@ -83,6 +83,9 @@ python photo_scout.py --since 2024-01-01
 # Force re-analysis of everything (ignore existing report)
 python photo_scout.py --force
 
+# Use CLIP stock-likeness scoring (requires clip-reference-embeddings.npy)
+python photo_scout.py --clip-reference clip-reference-embeddings.npy
+
 # Also write a human-readable Markdown report alongside the JSON
 python photo_scout.py --markdown
 
@@ -102,6 +105,7 @@ Full option reference:
 --limit N          Max photos to process (selects most recent N)
 --since YYYY-MM-DD Only photos taken on or after this date
 --force            Re-analyse all photos, ignoring any existing report
+--clip-reference FILE  Path to CLIP reference embeddings (from build_reference.py)
 ```
 
 ## Output files
@@ -265,6 +269,86 @@ embedded — the standard metadata fields that Adobe Stock, Alamy, and Shutterst
 
 Run `embed-metadata.sh` from the project directory so it can find the default report and write
 the output directory relative to your current location.
+
+## CLIP Stock-Likeness Scoring (optional)
+
+The Ollama vision model scores commercial appeal by reasoning about the image, but a small model
+like `llava:7b` has limited commercial intuition. As an alternative, `build_reference.py` builds
+a CLIP embedding set from photos that are known to meet stock photo standards — then
+`photo_scout.py --clip-reference` scores each new photo by similarity to that reference set.
+
+**What CLIP scoring does:**
+
+- Compares your photo to a reference set of accepted stock-quality images using cosine similarity
+- Produces a `clip_score` (1–5) that reflects how closely the photo's subject and style match
+  the reference set
+- When `--clip-reference` is provided, `clip_score` replaces the model's `commercial_score` for
+  recommendation thresholds and `overall_score` — the vision model still runs for `technical_score`,
+  `subject`, `keywords`, and `reason`
+
+**What CLIP scoring cannot do:**
+
+- It measures *subject/style similarity*, not technical quality (that remains `technical_score`)
+- A great photo of a rare subject may score low if the reference set has few similar examples
+- It is not a replacement for human review of borderline cases
+
+### Step 1 — Build the reference set
+
+Install CLIP dependencies (one-time, ~2 GB download for PyTorch):
+
+```bash
+pip install open_clip_torch numpy Pillow requests
+```
+
+Download 200 featured photos from Wikimedia Commons and compute embeddings:
+
+```bash
+python build_reference.py --download 200
+```
+
+Optionally add your own known-good stock photos:
+
+```bash
+python build_reference.py --source ~/my-reference-photos --download 100
+```
+
+Full option reference:
+
+```text
+--source DIR         Local directory of reference photos to embed
+--download N         Download N featured photos from Wikimedia Commons (no API key needed)
+--output FILE        Output .npy file (default: clip-reference-embeddings.npy)
+--download-dir DIR   Cache for downloaded photos (default: clip-reference/)
+```
+
+Wikimedia Commons [Featured Pictures](https://commons.wikimedia.org/wiki/Commons:Featured_pictures)
+are hand-curated by Wikipedia editors for technical quality — a useful proxy for stock photo
+standards, freely available with no authentication required.
+
+### Step 2 — Score with CLIP
+
+Pass the embeddings file when running `photo_scout.py`:
+
+```bash
+python photo_scout.py --clip-reference clip-reference-embeddings.npy
+```
+
+The per-photo output line gains a `clip:` field:
+
+```text
+[1/10] IMG_1234.HEIC  — submit  tech:4  comm:3  clip:4.2  78%
+```
+
+The JSON report gains a `clip_score` field alongside `commercial_score`. Use `--force` to re-score
+photos already in the report with the new CLIP signal.
+
+### Reference set size recommendations
+
+| Reference photos | Accuracy | Notes |
+| --- | --- | --- |
+| 50–100 | Low | Useful for basic filtering |
+| 200–500 | Good | Recommended starting point |
+| 1000+ | Best | More diverse coverage of subjects |
 
 ## Stock Photo Platforms
 
