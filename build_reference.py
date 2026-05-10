@@ -47,7 +47,13 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
+
+from rich.console import Console
+
+console = Console()
+err_console = Console(stderr=True)
 
 # CLIP model — must match _CLIP_MODEL / _CLIP_PRETRAINED in photo_scout.py
 _CLIP_MODEL = "ViT-B-32"
@@ -55,6 +61,9 @@ _CLIP_PRETRAINED = "openai"
 
 _WIKIMEDIA_API = "https://commons.wikimedia.org/w/api.php"
 _MAX_IMAGE_BYTES = 8 * 1024 * 1024  # skip files over 8 MB
+_DOWNLOAD_DELAY = 1.5               # seconds between image download requests
+_API_DELAY = 0.5                    # seconds between API batch calls
+_MAX_RETRIES = 4                    # retry attempts on transient failures
 
 
 def _require_deps() -> tuple:
@@ -75,11 +84,8 @@ def _require_deps() -> tuple:
 
         return np, open_clip, torch, Image, requests
     except ImportError as exc:
-        print(f"Error: CLIP dependencies not installed: {exc}", file=sys.stderr)
-        print(
-            "Fix: pip install open_clip_torch numpy Pillow requests",
-            file=sys.stderr,
-        )
+        err_console.print(f"[red bold]Error:[/] CLIP dependencies not installed: {exc}")
+        err_console.print("Fix: [cyan]pip install open_clip_torch numpy Pillow requests[/]")
         sys.exit(1)
 
 
@@ -129,6 +135,8 @@ def _fetch_image_urls(titles: list[str], session) -> list[str]:
     """
     urls: list[str] = []
     for i in range(0, len(titles), 50):
+        if i > 0:
+            time.sleep(_API_DELAY)
         batch = titles[i : i + 50]
         params = {
             "action": "query",
@@ -159,7 +167,8 @@ def _fetch_image_urls(titles: list[str], session) -> list[str]:
 def _download_photos(urls: list[str], dest_dir: Path, session, n: int) -> list[Path]:
     """Download image files to dest_dir, up to n total.
 
-    Skips files already present in dest_dir (idempotent).
+    Skips files already present in dest_dir (idempotent). Throttles requests
+    to respect Wikimedia rate limits and retries with backoff on 429 responses.
 
     Args:
         urls: Direct image download URLs.
@@ -172,6 +181,7 @@ def _download_photos(urls: list[str], dest_dir: Path, session, n: int) -> list[P
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
     paths: list[Path] = []
+    need_delay = False
     for url in urls:
         if len(paths) >= n:
             break
@@ -179,17 +189,35 @@ def _download_photos(urls: list[str], dest_dir: Path, session, n: int) -> list[P
         dest = dest_dir / filename
         if dest.exists():
             paths.append(dest)
+            console.print(f"  [dim]Cached:[/] {filename}")
             continue
-        try:
-            resp = session.get(url, timeout=60, stream=True)
-            resp.raise_for_status()
-            with dest.open("wb") as fh:
-                for chunk in resp.iter_content(chunk_size=65536):
-                    fh.write(chunk)
-            paths.append(dest)
-            print(f"  Downloaded: {filename}")
-        except Exception as exc:
-            print(f"  Warning: failed to download {filename}: {exc}")
+
+        if need_delay:
+            time.sleep(_DOWNLOAD_DELAY)
+        need_delay = True
+
+        for attempt in range(_MAX_RETRIES):
+            try:
+                resp = session.get(url, timeout=60, stream=True)
+                if resp.status_code == 429:
+                    retry_after = int(resp.headers.get("Retry-After", _DOWNLOAD_DELAY * (2 ** attempt)))
+                    console.print(f"  [yellow]Rate limited[/] — waiting {retry_after}s (attempt {attempt + 1}/{_MAX_RETRIES})...")
+                    time.sleep(retry_after)
+                    continue
+                resp.raise_for_status()
+                with dest.open("wb") as fh:
+                    for chunk in resp.iter_content(chunk_size=65536):
+                        fh.write(chunk)
+                paths.append(dest)
+                console.print(f"  [green]Downloaded:[/] {filename}")
+                break
+            except Exception as exc:
+                if attempt < _MAX_RETRIES - 1:
+                    wait = _DOWNLOAD_DELAY * (2 ** attempt)
+                    console.print(f"  [yellow]Retrying[/] {filename} in {wait:.0f}s ({exc})...")
+                    time.sleep(wait)
+                else:
+                    console.print(f"  [red]Warning:[/] failed to download {filename}: {exc}")
     return paths
 
 
@@ -204,12 +232,13 @@ def _load_clip_model(open_clip, torch, device: str) -> tuple:
     Returns:
         Tuple of (model, preprocess).
     """
-    print(f"Loading CLIP model {_CLIP_MODEL} / {_CLIP_PRETRAINED}...")
-    model, _, preprocess = open_clip.create_model_and_transforms(
-        _CLIP_MODEL, pretrained=_CLIP_PRETRAINED
-    )
-    model = model.to(device)
-    model.eval()
+    with console.status(f"Loading CLIP model [dim]{_CLIP_MODEL} / {_CLIP_PRETRAINED}[/]..."):
+        model, _, preprocess = open_clip.create_model_and_transforms(
+            _CLIP_MODEL, pretrained=_CLIP_PRETRAINED
+        )
+        model = model.to(device)
+        model.eval()
+    console.print(f"[green]✓[/] CLIP model loaded [dim]({_CLIP_MODEL} / {_CLIP_PRETRAINED})[/]")
     return model, preprocess
 
 
@@ -247,9 +276,9 @@ def _embed_images(
                 emb = emb / emb.norm(dim=-1, keepdim=True)
             embeddings.append(emb.cpu().float().numpy())
             sources.append(str(path))
-            print(f"  [{i}/{len(paths)}] {path.name}")
+            console.print(f"  [dim][{i}/{len(paths)}][/] {path.name}")
         except Exception as exc:
-            print(f"  Warning: skipping {path.name}: {exc}")
+            console.print(f"  [yellow]Warning:[/] skipping {path.name}: {exc}")
     if not embeddings:
         return np.empty((0, 512), dtype=np.float32), []
     return np.vstack(embeddings).astype(np.float32), sources
@@ -307,7 +336,7 @@ def main() -> None:
     np, open_clip, torch, Image, requests = _require_deps()
 
     device = "mps" if torch.backends.mps.is_available() else "cpu"
-    print(f"Device: {device}")
+    console.print(f"[dim]Device: {device}[/]")
 
     model, preprocess = _load_clip_model(open_clip, torch, device)
 
@@ -315,42 +344,44 @@ def main() -> None:
 
     if args.source:
         if not args.source.is_dir():
-            print(f"Error: --source '{args.source}' is not a directory.", file=sys.stderr)
+            err_console.print(f"[red bold]Error:[/] --source '{args.source}' is not a directory.")
             sys.exit(1)
         local_paths = [
             p
             for p in sorted(args.source.iterdir())
             if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".heic", ".tiff", ".tif")
         ]
-        print(f"Found {len(local_paths)} image(s) in {args.source}")
+        console.print(f"[dim]Found {len(local_paths)} image(s) in[/] {args.source}")
         all_paths.extend(local_paths)
 
     if args.download > 0:
-        print(f"Fetching {args.download} photos from Wikimedia Commons featured pictures...")
+        est_minutes = round(args.download * _DOWNLOAD_DELAY / 60, 1)
+        console.rule(f"[bold]Downloading {args.download} photos from Wikimedia Commons[/]")
+        console.print(f"[dim]~{est_minutes} min at {_DOWNLOAD_DELAY}s/image to respect rate limits[/]")
         session = requests.Session()
         session.headers["User-Agent"] = (
             "photo-scout/1.0 (https://github.com/ali5ter/photo-scout)"
         )
         # Fetch 4× titles to account for filtering losses (non-JPEG, oversized, etc.)
         titles = _fetch_wikimedia_titles(args.download * 4, session)
-        print(f"  Found {len(titles)} featured file titles — resolving URLs...")
+        console.print(f"  [dim]Found {len(titles)} featured file titles — resolving URLs...[/]")
         urls = _fetch_image_urls(titles, session)
-        print(f"  {len(urls)} JPEG/PNG files under {_MAX_IMAGE_BYTES // (1024*1024)} MB")
+        console.print(f"  [dim]{len(urls)} JPEG/PNG files under {_MAX_IMAGE_BYTES // (1024*1024)} MB[/]")
         downloaded = _download_photos(urls, args.download_dir, session, args.download)
-        print(f"  Downloaded/cached: {len(downloaded)} photo(s)")
+        console.print(f"  [green]✓[/] Downloaded/cached: [bold]{len(downloaded)}[/] photo(s)")
         all_paths.extend(downloaded)
 
     if not all_paths:
-        print("Error: no images to process.", file=sys.stderr)
+        err_console.print("[red bold]Error:[/] no images to process.")
         sys.exit(2)
 
-    print(f"\nComputing embeddings for {len(all_paths)} image(s)...")
+    console.rule(f"[bold]Computing embeddings for {len(all_paths)} image(s)[/]")
     embeddings, sources = _embed_images(
         all_paths, model, preprocess, Image, torch, np, device
     )
 
     if len(embeddings) == 0:
-        print("Error: no embeddings computed — all images failed.", file=sys.stderr)
+        err_console.print("[red bold]Error:[/] no embeddings computed — all images failed.")
         sys.exit(2)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -370,11 +401,12 @@ def main() -> None:
         encoding="utf-8",
     )
 
-    print(f"\nDone. {len(embeddings)} embeddings → {args.output.resolve()}")
-    print(f"Metadata: {meta_path.resolve()}")
-    print(
-        "\nUse with photo_scout.py:\n"
-        f"  python photo_scout.py --clip-reference {args.output}"
+    console.rule()
+    console.print(f"[green]✓[/] [bold]{len(embeddings)} embeddings[/] → {args.output.resolve()}")
+    console.print(f"[dim]Metadata:[/] {meta_path.resolve()}")
+    console.print(
+        f"\n[dim]Use with photo_scout.py:[/]\n"
+        f"  [cyan]python photo_scout.py --clip-reference {args.output}[/]"
     )
 
 

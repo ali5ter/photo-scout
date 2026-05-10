@@ -55,6 +55,10 @@ from pathlib import Path
 
 import ollama
 import osxphotos
+from rich.console import Console
+
+console = Console()
+err_console = Console(stderr=True)
 
 _ANALYSIS_PROMPT = (
     "You are a senior stock photo editor at a premium agency. Technical quality "
@@ -162,16 +166,16 @@ def check_ollama(model: str) -> None:
         response = ollama.list()
         available = [m.model for m in response.models]
         if not any(model in name for name in available):
-            print(f"Error: model '{model}' is not available in Ollama.", file=sys.stderr)
-            print(f"Available models: {', '.join(available) or 'none'}", file=sys.stderr)
-            print(f"Fix: ollama pull {model}", file=sys.stderr)
+            err_console.print(f"[red bold]Error:[/] model '{model}' is not available in Ollama.")
+            err_console.print(f"Available models: {', '.join(available) or 'none'}")
+            err_console.print(f"Fix: [cyan]ollama pull {model}[/]")
             sys.exit(1)
     except ollama.ResponseError as exc:
-        print(f"Error: Ollama returned an error: {exc}", file=sys.stderr)
+        err_console.print(f"[red bold]Error:[/] Ollama returned an error: {exc}")
         sys.exit(1)
     except Exception as exc:
-        print(f"Error: cannot connect to Ollama: {exc}", file=sys.stderr)
-        print("Fix: ensure Ollama is running — run: ollama serve", file=sys.stderr)
+        err_console.print(f"[red bold]Error:[/] cannot connect to Ollama: {exc}")
+        err_console.print("Fix: [cyan]ollama serve[/]")
         sys.exit(1)
 
 
@@ -207,11 +211,8 @@ def load_photos(
         kwargs: dict = {"dbfile": str(library_path)} if library_path else {}
         db = osxphotos.PhotosDB(**kwargs)
     except Exception as exc:
-        print(f"Error: cannot open Photos library: {exc}", file=sys.stderr)
-        print(
-            "Fix: check the path and ensure Photos.app is not performing a library operation.",
-            file=sys.stderr,
-        )
+        err_console.print(f"[red bold]Error:[/] cannot open Photos library: {exc}")
+        err_console.print("Fix: check the path and ensure Photos.app is not performing a library operation.")
         sys.exit(2)
 
     photos = db.photos()
@@ -227,12 +228,11 @@ def load_photos(
     skipped_cloud = len(photos) - len(available)
 
     if not available:
-        print("Error: no photos with local originals found matching the given filters.", file=sys.stderr)
+        err_console.print("[red bold]Error:[/] no photos with local originals found matching the given filters.")
         if skipped_cloud:
-            print(
-                f"Note: {skipped_cloud} photo(s) are iCloud-only and were excluded. "
-                "Download them in Photos.app first.",
-                file=sys.stderr,
+            err_console.print(
+                f"[yellow]Note:[/] {skipped_cloud} photo(s) are iCloud-only and were excluded. "
+                "Download them in Photos.app first."
             )
         sys.exit(3)
 
@@ -403,29 +403,29 @@ def _load_clip_engine(reference_path: Path) -> tuple:
         import open_clip
         import torch
     except ImportError as exc:
-        print(f"Error: CLIP dependencies not installed: {exc}", file=sys.stderr)
-        print("Fix: pip install open_clip_torch numpy Pillow", file=sys.stderr)
+        err_console.print(f"[red bold]Error:[/] CLIP dependencies not installed: {exc}")
+        err_console.print("Fix: [cyan]pip install open_clip_torch numpy Pillow[/]")
         sys.exit(1)
 
     if not reference_path.exists():
-        print(f"Error: CLIP reference file not found: {reference_path}", file=sys.stderr)
-        print("Fix: run python build_reference.py --download 200", file=sys.stderr)
+        err_console.print(f"[red bold]Error:[/] CLIP reference file not found: {reference_path}")
+        err_console.print("Fix: [cyan]python build_reference.py --download 200[/]")
         sys.exit(1)
 
     try:
         ref_embs = np.load(str(reference_path))
     except Exception as exc:
-        print(f"Error: cannot load CLIP reference embeddings: {exc}", file=sys.stderr)
+        err_console.print(f"[red bold]Error:[/] cannot load CLIP reference embeddings: {exc}")
         sys.exit(1)
 
     device = "mps" if torch.backends.mps.is_available() else "cpu"
-    print(f"Loading CLIP model ({_CLIP_MODEL})...")
-    model, _, preprocess = open_clip.create_model_and_transforms(
-        _CLIP_MODEL, pretrained=_CLIP_PRETRAINED
-    )
-    model = model.to(device)
-    model.eval()
-    print(f"  Reference set: {len(ref_embs)} embeddings from {reference_path}")
+    with console.status(f"Loading CLIP model [dim]({_CLIP_MODEL})[/]..."):
+        model, _, preprocess = open_clip.create_model_and_transforms(
+            _CLIP_MODEL, pretrained=_CLIP_PRETRAINED
+        )
+        model = model.to(device)
+        model.eval()
+    console.print(f"[green]✓[/] CLIP model loaded — [dim]{len(ref_embs)} reference embeddings from {reference_path}[/]")
     return model, preprocess, ref_embs, device
 
 
@@ -572,12 +572,13 @@ def analyse_photo(
                 else float(result.commercial_score)
             )
             # Enforce minimum score thresholds regardless of model recommendation.
-            # Models sometimes assign 'submit' despite low scores; these floors prevent that.
+            # Two separate ifs so a submit→maybe demotion is immediately re-checked
+            # against the maybe floor (elif would skip the second check).
             if result.recommendation == "submit" and (
                 result.technical_score < 4 or commercial < 4
             ):
                 result.recommendation = "maybe"
-            elif result.recommendation == "maybe" and (
+            if result.recommendation == "maybe" and (
                 result.technical_score < 3 or commercial < 3
             ):
                 result.recommendation = "skip"
@@ -803,7 +804,7 @@ def main() -> None:
         try:
             since = datetime.strptime(args.since, "%Y-%m-%d")
         except ValueError:
-            print(f"Error: invalid date '{args.since}' — use YYYY-MM-DD format.", file=sys.stderr)
+            err_console.print(f"[red bold]Error:[/] invalid date '{args.since}' — use YYYY-MM-DD format.")
             sys.exit(1)
 
     output_path: Path = args.output
@@ -821,14 +822,16 @@ def main() -> None:
     if clip_reference:
         clip_engine = _load_clip_engine(clip_reference)
 
-    print(f"Checking Ollama (model: {args.model})...")
-    check_ollama(args.model)
+    with console.status(f"Checking Ollama [dim](model: {args.model})[/]..."):
+        check_ollama(args.model)
+    console.print(f"[green]✓[/] Ollama ready [dim]({args.model})[/]")
 
-    print("Opening Photos library...")
-    photos, skipped_cloud = load_photos(args.library, args.album, since, args.limit)
+    with console.status("Opening Photos library..."):
+        photos, skipped_cloud = load_photos(args.library, args.album, since, args.limit)
+    console.print(f"[green]✓[/] Photos library opened")
 
     if skipped_cloud:
-        print(f"  Note: {skipped_cloud} iCloud-only photo(s) skipped (not downloaded locally).")
+        console.print(f"  [yellow]⚠[/]  {skipped_cloud} iCloud-only photo(s) skipped (not downloaded locally).")
 
     # Load prior results for incremental runs (skipped when --force is set)
     prior_results = {} if args.force else _load_prior_results(output_path)
@@ -836,31 +839,41 @@ def main() -> None:
     photos_to_run = [p for p in photos if str(Path(p.path)) not in already_analysed]
 
     if prior_results and not args.force:
-        print(f"  Resuming: {len(prior_results)} already in report, {len(photos_to_run)} unanalysed.")
+        console.print(
+            f"  [dim]Resuming: {len(prior_results)} already in report, "
+            f"{len(photos_to_run)} unanalysed.[/]"
+        )
 
     # Apply --limit to unanalysed photos so it always means "analyse N new photos"
     if args.limit:
         photos_to_run = photos_to_run[: args.limit]
 
     if not photos_to_run:
-        print("Nothing new to analyse. Use --force to re-analyse everything.")
+        console.print("[dim]Nothing new to analyse. Use --force to re-analyse everything.[/]")
         sys.exit(0)
 
-    print(f"Analysing {len(photos_to_run)} photo(s). This may take a while on low-RAM hardware.\n")
+    console.rule(f"[bold]Analysing {len(photos_to_run)} photo(s)[/]")
+
+    _REC_COLOR = {"submit": "green", "maybe": "yellow", "skip": "dim"}
+    n = len(photos_to_run)
+    pad = len(str(n))
 
     new_analyses: list[PhotoAnalysis] = []
     for i, photo in enumerate(photos_to_run, 1):
-        name = Path(photo.path).name
-        print(f"  [{i:>{len(str(len(photos_to_run)))}}/{len(photos_to_run)}] {name}", end="", flush=True)
-        result = analyse_photo(photo, args.model, clip_engine)
+        name = photo.original_filename or Path(photo.path).name
+        label = f"[dim][{i:>{pad}}/{n}][/] {name}"
+        with console.status(f"{label}  [dim]analysing...[/]"):
+            result = analyse_photo(photo, args.model, clip_engine)
         if result.error:
-            print(f"  — ERROR: {result.error}")
+            console.print(f"{label}  [red]ERROR:[/] {result.error}")
         else:
             pct = round(result.overall_score / 5 * 100)
-            clip_info = f"  clip:{result.clip_score}" if result.clip_score > 0.0 else ""
-            print(
-                f"  — {result.recommendation}  tech:{result.technical_score}"
-                f"  comm:{result.commercial_score}{clip_info}  {pct}%"
+            clip_info = f"  clip:[cyan]{result.clip_score}[/]" if result.clip_score > 0.0 else ""
+            rec_color = _REC_COLOR.get(result.recommendation, "white")
+            console.print(
+                f"{label}  [{rec_color}]{result.recommendation}[/]"
+                f"  tech:{result.technical_score}  comm:{result.commercial_score}"
+                f"{clip_info}  [dim]{pct}%[/]"
             )
         new_analyses.append(result)
 
@@ -868,7 +881,6 @@ def main() -> None:
     analyses = prior_analyses + new_analyses
     analyses.sort(key=_sort_key)
 
-    print()
     if args.output_format == "json":
         write_json(analyses, output_path)
     else:
@@ -883,13 +895,20 @@ def main() -> None:
     error_count = sum(1 for a in analyses if a.error)
     skip_count = len(analyses) - submit_count - maybe_count
 
-    print(f"Done. {len(new_analyses)} new photo(s) analysed ({len(analyses)} total in report).")
-    print(f"  Submit: {submit_count}  |  Maybe: {maybe_count}  |  Skip: {skip_count}")
+    console.rule()
+    console.print(
+        f"[bold]Done.[/] {len(new_analyses)} new photo(s) analysed [dim]({len(analyses)} total in report)[/]"
+    )
+    console.print(
+        f"  [green]Submit: {submit_count}[/]  "
+        f"[yellow]Maybe: {maybe_count}[/]  "
+        f"[dim]Skip: {skip_count}[/]"
+    )
     if error_count:
-        print(f"  Errors: {error_count} (see report for details)")
-    print(f"\nReport:   {output_path.resolve()}")
+        console.print(f"  [red]Errors: {error_count}[/] (see report for details)")
+    console.print(f"\n[dim]Report:[/]   {output_path.resolve()}")
     if args.markdown:
-        print(f"Markdown: {output_path.with_suffix('.md').resolve()}")
+        console.print(f"[dim]Markdown:[/] {output_path.with_suffix('.md').resolve()}")
 
 
 if __name__ == "__main__":
