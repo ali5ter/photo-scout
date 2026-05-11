@@ -124,7 +124,14 @@ the other scripts.
 
 ## Understanding the scores
 
-Each photo receives two scores from the vision model, both on a 1–5 scale:
+Each photo receives two scores on a 1–5 scale:
+
+`technical_score` is computed deterministically from the image using PIL/NumPy — no model
+involved. It combines sharpness (90th-percentile edge magnitude), exposure (clipping, brightness,
+dynamic range), and noise (flat-region variance), weighted 50/30/20%.
+
+`commercial_score` comes from the Ollama vision model, which assesses market demand, concept
+clarity, and licensing suitability.
 
 | Score | technical_score | commercial_score |
 | --- | --- | --- |
@@ -134,17 +141,18 @@ Each photo receives two scores from the vision model, both on a 1–5 scale:
 | 4 | Sharp and clean — meets stock site technical bar | Solid commercial appeal with an identifiable buyer market |
 | 5 | Tack sharp, perfect exposure, no visible noise, professional composition | Strong sellable concept — business, lifestyle, nature, travel, technology |
 
-`overall_score` is the mean of the two (1.0–5.0).
+`overall_score` is the mean of `technical_score` and the effective commercial signal (1.0–5.0).
+When `--clip-reference` is active and `clip_score ≥ 2.0`, `clip_score` replaces `commercial_score`
+as the commercial signal; otherwise `commercial_score` is used.
 
 `recommendation` is determined by strict score thresholds:
 
-- **submit** — both `technical_score` and `commercial_score` are 4 or above
+- **submit** — both `technical_score` and the commercial signal are 4 or above
 - **maybe** — both scores are 3 or above, but not both 4+; review manually before deciding
 - **skip** — either score is below 3, or the photo fails stock site standards
 
-The model is prompted to apply the same rejection standards used by Shutterstock and Adobe Stock
-reviewers. The thresholds are also enforced in code, so a `submit` can never appear with scores
-below 4/4 regardless of what the model says.
+Thresholds are enforced in code, so a `submit` can never appear with scores below 4/4
+regardless of what the model says.
 
 ## Incremental runs
 
@@ -352,6 +360,13 @@ Sites that pay per download (unlike Unsplash, which is free):
 - [Shutterstock](https://submit.shutterstock.com) — high volume, lower per-download rate
 - [Alamy](https://www.alamy.com/contributor/) — accepts editorial/niche content, higher royalties
 - [Pond5](https://www.pond5.com) — strong for video, also accepts photos
+
+## Additional Documentation
+
+- [HOW-IT-WORKS.md](HOW-IT-WORKS.md) — technical deep-dive with pipeline flow diagrams covering
+  scoring architecture, CLIP theory, and post-processing workflows
+- [STOCK-PHOTO-RULES.md](STOCK-PHOTO-RULES.md) — practical reference for model/property releases,
+  architectural copyright, logos/trademarks, and editorial vs commercial licences
 
 ## License
 

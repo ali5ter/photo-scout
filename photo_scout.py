@@ -102,6 +102,9 @@ _CLIP_PRETRAINED = "openai"
 _SIM_LOW = 0.65   # → clip_score 1
 _SIM_HIGH = 0.88  # → clip_score 5
 _TOP_K = 50       # number of top reference matches to average
+# Below this clip_score, the reference set likely doesn't cover the photo's subject;
+# fall back to the model's commercial_score rather than penalising with a floor value.
+_CLIP_MIN_SIGNAL = 2.0
 
 
 @dataclass
@@ -147,7 +150,11 @@ class PhotoAnalysis:
         """
         if not self.technical_score:
             return 0.0
-        commercial = self.clip_score if self.clip_score > 0.0 else float(self.commercial_score)
+        commercial = (
+            self.clip_score
+            if self.clip_score >= _CLIP_MIN_SIGNAL
+            else float(self.commercial_score)
+        )
         if not commercial:
             return 0.0
         return round((self.technical_score + commercial) / 2, 1)
@@ -568,7 +575,7 @@ def analyse_photo(
             # The model's commercial_score is still stored but CLIP is more reliable.
             commercial = (
                 result.clip_score
-                if clip_engine is not None and result.clip_score > 0.0
+                if clip_engine is not None and result.clip_score >= _CLIP_MIN_SIGNAL
                 else float(result.commercial_score)
             )
             # Enforce minimum score thresholds regardless of model recommendation.
@@ -868,7 +875,12 @@ def main() -> None:
             console.print(f"{label}  [red]ERROR:[/] {result.error}")
         else:
             pct = round(result.overall_score / 5 * 100)
-            clip_info = f"  clip:[cyan]{result.clip_score}[/]" if result.clip_score > 0.0 else ""
+            if result.clip_score >= _CLIP_MIN_SIGNAL:
+                clip_info = f"  clip:[cyan]{result.clip_score}[/]"
+            elif result.clip_score > 0.0:
+                clip_info = f"  clip:[dim]{result.clip_score}[/]"  # below signal floor, falling back to comm
+            else:
+                clip_info = ""
             rec_color = _REC_COLOR.get(result.recommendation, "white")
             console.print(
                 f"{label}  [{rec_color}]{result.recommendation}[/]"
