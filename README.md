@@ -45,6 +45,92 @@ To use a different model at setup time:
 ./setup.sh llava:7b     # default, best quality (needs ~4 GB free RAM)
 ```
 
+## End-to-end workflow
+
+### Step 1 — First-time setup
+
+```bash
+git clone https://github.com/ali5ter/photo-scout.git
+cd photo-scout
+./setup.sh
+source .venv/bin/activate
+```
+
+Build the CLIP reference set (takes ~5 min — downloads 200 Wikimedia featured photos):
+
+```bash
+python build_reference.py --download 200
+```
+
+Optionally supplement with your own known-good stock photos to improve CLIP scoring for
+your subjects:
+
+```bash
+python build_reference.py --source ~/path/to/good-stock-photos --download 100
+```
+
+### Step 2 — Curate candidates in Photos.app
+
+Create an album called **Stock Candidates** (or any name) in Photos.app and drag in photos
+you think have potential. This pre-filters the analysis to photos worth scoring.
+
+If those photos are iCloud-only (Photos shows a cloud icon), download them first:
+
+```bash
+osxphotos export /tmp/stock-dl --album "Stock Candidates" \
+  --download-missing --use-photokit
+```
+
+This forces Photos to pull the originals to disk. Run the analysis immediately after —
+iCloud will re-offload them automatically when storage is needed.
+
+### Step 3 — Analyse
+
+```bash
+python photo_scout.py --album "Stock Candidates"
+```
+
+Subsequent runs skip already-analysed photos. Use `--force` to re-score everything:
+
+```bash
+python photo_scout.py --album "Stock Candidates" --force
+```
+
+### Step 4 — Review results
+
+Open the Markdown report for a human-readable summary (re-run with `--markdown` to generate it):
+
+```bash
+python photo_scout.py --album "Stock Candidates" --markdown
+open photo-scout-report.md
+```
+
+Or tag photos directly in Photos.app for visual browsing:
+
+```bash
+./tag-photos.sh
+```
+
+Then search for `photo-scout-submit` in Photos.app, or create a Smart Album with that keyword.
+
+See [STOCK-PHOTO-RULES.md](STOCK-PHOTO-RULES.md) before submitting — covers model/property
+releases, copyright, and logo rules.
+
+### Step 5 — Prepare for upload
+
+Copy recommended photos with IPTC/XMP metadata embedded:
+
+```bash
+./embed-metadata.sh                  # submit recommendations only
+./embed-metadata.sh --filter maybe   # submit + maybe
+./embed-metadata.sh --organize       # all photos in submit/ maybe/ skip/ subfolders
+```
+
+Tagged copies land in `ready-to-submit/`. Upload directly to Adobe Stock, Shutterstock,
+Alamy, or Pond5.
+
+---
+
 ## Model Choice
 
 | Model | Size | Speed (Apple Silicon, 8 GB) | Quality |
