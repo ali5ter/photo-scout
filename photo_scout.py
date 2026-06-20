@@ -91,7 +91,9 @@ _ANALYSIS_PROMPT = (
 # Sharpness uses the 90th-percentile edge value (not mean) to focus on strong edges
 # and reduce sensitivity to smooth areas (sky, skin) that drag the mean down.
 _SHARP_EDGE_LOW = 3.0    # p90 edge magnitude → sharpness 1 (blurry)
-_SHARP_EDGE_HIGH = 50.0  # p90 edge magnitude → sharpness 5 (very sharp)
+_SHARP_EDGE_HIGH = 35.0  # p90 edge magnitude → sharpness 5 (very sharp)
+# 35 calibrated against iPhone HEIC originals: p90 typically 25-60 for well-focused shots,
+# so H=35 spreads scores meaningfully (p90=25→sharp≈4.4, p90=35→5) rather than bunching at 4.
 _NOISE_FLAT_HIGH = 6.0   # mean diff in flat regions → noise component 1 (very noisy)
 
 # CLIP stock-likeness scoring — must match _CLIP_MODEL / _CLIP_PRETRAINED in build_reference.py
@@ -104,7 +106,9 @@ _SIM_HIGH = 0.88  # → clip_score 5
 _TOP_K = 50       # number of top reference matches to average
 # Below this clip_score, the reference set likely doesn't cover the photo's subject;
 # fall back to the model's commercial_score rather than penalising with a floor value.
-_CLIP_MIN_SIGNAL = 2.0
+# 2.5 avoids treating near-floor CLIP scores (2.0–2.4) as meaningful signal — scores
+# in that range are noise from Wikimedia's wildlife/architecture bias, not real similarity.
+_CLIP_MIN_SIGNAL = 2.5
 
 
 @dataclass

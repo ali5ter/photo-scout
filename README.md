@@ -228,8 +228,10 @@ clarity, and licensing suitability.
 | 5 | Tack sharp, perfect exposure, no visible noise, professional composition | Strong sellable concept — business, lifestyle, nature, travel, technology |
 
 `overall_score` is the mean of `technical_score` and the effective commercial signal (1.0–5.0).
-When `--clip-reference` is active and `clip_score ≥ 2.0`, `clip_score` replaces `commercial_score`
-as the commercial signal; otherwise `commercial_score` is used.
+When `--clip-reference` is active and `clip_score ≥ 2.5`, `clip_score` replaces `commercial_score`
+as the commercial signal; otherwise `commercial_score` is used. The 2.5 floor prevents near-floor
+CLIP scores (which reflect reference set gaps rather than real similarity) from overriding a strong
+`commercial_score`.
 
 `recommendation` is determined by strict score thresholds:
 
@@ -263,10 +265,19 @@ and the count is reported. To include them:
 
 - **Download everything:** in Photos.app go to **Settings → iCloud** and select
   **Download Originals to this Mac** (requires sufficient disk space)
-- **Download selectively:** select photos or an album in Photos.app, right-click, and choose
-  **Download \[N\] Originals**
+- **Download selectively via osxphotos** (works on macOS 26+ where right-click download is absent):
 
-There is no way to trigger iCloud downloads programmatically from this script.
+```bash
+mkdir -p /tmp/photos-export
+osxphotos export /tmp/photos-export \
+  --album "Album Name" \
+  --download-missing \
+  --use-photokit \
+  --limit 20
+```
+
+  Run `photo_scout.py` immediately after — iCloud re-offloads photos on its own schedule
+  if **Optimise Mac Storage** is enabled.
 
 ## Identifying photos from the report
 
